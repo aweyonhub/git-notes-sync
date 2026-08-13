@@ -31,6 +31,17 @@ make cross            # 交叉编译全部 5 平台到 dist/
 - **系统 Git**（`git --version` 可运行）——本工具不内置 Git，全部调用系统 Git
 - 仓库已配置远端与上游：`git remote add origin <url>` + `git push -u origin main`
 
+**笔记仓库是 GitHub 私有仓库时（常见场景）**：认证完全由系统 git 处理，本工具不介入。推荐 PAT + credential helper 持久化（一次配置，终端/daemon/cron 全部可用）：
+
+```bash
+git config --global credential.helper store     # 凭据存入 ~/.git-credentials（明文，仅本机）
+git push                                        # 首次输入用户名 + PAT 作为密码，之后免输入
+# 或（token 不进本地文件，但需终端可用）：
+git remote set-url origin https://<PAT>@github.com/you/notes.git
+```
+
+> ⚠️ daemon / cron 运行时需保证 `HOME` 指向含凭据的目录（见 §5 环境注意事项）；PAT 建议只授予 `repo` 权限、定期轮换。
+
 ---
 
 ## 2. 快速上手
