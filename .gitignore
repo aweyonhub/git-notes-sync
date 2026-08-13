@@ -8,4 +8,5 @@
 *.test
 
 # npm package shell (binary downloaded at install time)
-/npm/bin/
+/npm/bin/gns
+/npm/bin/gns.exe

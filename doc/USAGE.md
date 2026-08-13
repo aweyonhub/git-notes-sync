@@ -13,11 +13,33 @@
 npm install -g github:aweyonhub/git-notes-sync
 ```
 
-安装过程自动按平台从 GitHub Releases 下载对应二进制到包内 `bin/gns.exe`，npm 的 `bin` 字段直接链接该原生二进制（无 JS 路由层）。安装后提供两个等价命令：
+postinstall 按平台从 GitHub Releases 下载对应二进制（`gns-<platform>-<arch>[.exe]`），自动跟随重定向、校验 SHA-256（Release 的 `checksums.txt`）、验证 `--version` 后落盘。安装后提供两个等价命令：
 
 ```bash
 gns --version        # 或 notes-sync --version
 ```
+
+**npm 11+ 默认拦截 install 脚本**（allow-scripts 安全机制），首次安装需放行（不同 npm 小版本的提示不同，任选其一）：
+
+```bash
+# 方式一：安装时放行
+npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
+# 方式二：永久放行（user 级配置）
+npm config set allow-scripts=git-notes-sync --location=user
+# 方式三：npm 11.2+ 的 approve 流程（按提示执行）
+npm approve-scripts git-notes-sync
+```
+
+**下载器环境变量**（企业代理/内网镜像/固定版本）：
+
+| 变量 | 作用 |
+|------|------|
+| `HTTPS_PROXY` / `HTTP_PROXY` | 正向代理（CONNECT 隧道） |
+| `GNS_VERSION` | 强制下载版本（默认取 package.json version） |
+| `GNS_REPO` | 仓库 `owner/name`（默认 `aweyonhub/git-notes-sync`） |
+| `GNS_RELEASE_BASE_URL` | Releases 基础地址（内网镜像） |
+| `GNS_CHECKSUM_URL` | checksums.txt 地址（默认 `<base>/checksums.txt`；缺失时跳过校验） |
+| `GNS_SKIP_INSTALL=1` | 跳过下载（二进制已存在时） |
 
 ### 方式二：手动构建（需要 Go 1.22+）
 

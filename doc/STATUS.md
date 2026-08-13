@@ -59,7 +59,7 @@
 
 ### 2.3 分发与工程化
 
-- npm 壳：`npm/`（postinstall 按平台下载 Releases 二进制，bin 注册 notes/notes-sync）
+- npm 壳：仓库根即 npm 包（package.json + scripts/install.js，postinstall 按平台下载 Releases 二进制，bin 注册 gns/notes-sync）
 - GitHub Actions：tag 触发交叉编译 5 平台 + 发布 Release
 - Makefile：build / test / vet / cross / clean
 - README.md + example.config.toml（全量配置注释）
@@ -77,8 +77,8 @@
 | 优先级 | 事项 | 说明 |
 |--------|------|------|
 | P0 | ~~创建 GitHub 仓库并替换占位符~~ | ✅ 已完成：https://github.com/aweyonhub/git-notes-sync（module path 同步更新） |
-| P0 | 打 tag 发布 v0.1.0 | 触发 Actions 交叉编译 → 生成 5 平台二进制 Release |
-| P0 | 验证 `npm install -g github:...` 全链路 | 在干净环境（无 Go）实测 postinstall 下载 + bin 可用 |
+| P0 | ~~打 tag 发布 v0.1.0~~ | ✅ 已完成：v0.1.0 CI 全绿（test + 5 平台交叉编译），Release 5 资产齐全（https://github.com/aweyonhub/git-notes-sync/releases/tag/v0.1.0） |
+| P0 | 验证 npm 安装链路 | ✅ 下载器已实测（redirect 跟随 / SHA-256 校验 / 版本验证 / 失败防护）；CI 增加 npm-install job（pack + tgz 安装 + gns 运行）；npm 11 需 `--allow-scripts=git-notes-sync`（文档已说明） |
 | P1 | 真实 AI endpoint 冒烟 | 本地 Ollama 或任意 OpenAI-compatible 服务验证 `commit_message="ai"` 与 `resolve --ai` |
 | P1 | Windows 实机验证 | daemon 行为、credential helper / SSH 环境继承、autocrlf 场景 |
 | P2 | `gns resolve` 交互式模式 | 逐个文件选择 ours/theirs/AI（当前为全局 flag 一次性处理） |
