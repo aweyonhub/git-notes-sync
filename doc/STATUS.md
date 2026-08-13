@@ -83,7 +83,7 @@
 | P1 | Windows 实机验证 | daemon 行为、credential helper / SSH 环境继承、autocrlf 场景 |
 | P2 | `gns resolve` 交互式模式 | 逐个文件选择 ours/theirs/AI（当前为全局 flag 一次性处理） |
 | P2 | cron 示例文档完善 | README 已有 `*/5 * * * *` 示例，可补充 launchd plist 模板 |
-| P3 | 可选增强 | `gns init` 生成示例配置；`--repo` 支持多仓库批量 sync |
+| P3 | 可选增强 | `gns init` 生成示例配置 |
 | P3 | 可选：GoReleaser 替代手写 Actions | 多平台发布更成熟（checksums/changelog/Homebrew 等）；当前 5 平台手写够用，仅建议补充 checksums 生成 |
 | P3 | 可选：shell 补全 | `gns completion bash\|zsh\|fish`，npm 生态用户偏好 |
 

@@ -30,9 +30,11 @@ make test           # 集成测试（需要系统 git）
 
 ```bash
 gns sync          # 核心命令：commit → fetch → merge → push
+gns sync-all      # 同步配置中所有 repos
 gns commit        # 立即提交当前修改（忽略 debounce）
 gns commit-ai     # AI 生成 message 后提交
 gns status        # 工作区 / 远端 / 冲突状态
+gns repos list|add|del   # 维护多仓库列表
 gns resolve       # 列出已持久化的冲突 markers
 gns resolve --ours | --theirs   # 保留单侧，去 markers，提交并推送
 gns resolve --ai                # AI 语义合并（需配置 [ai]）

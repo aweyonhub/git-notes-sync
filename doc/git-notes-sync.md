@@ -173,6 +173,8 @@ api_key_env = "NOTES_AI_API_KEY"
 
 流程：`git diff --cached → AI API → commit message → git commit`
 
+**Agent 指令文件**：`[ai] agent_file`（默认 `AGENTS.md`，相对仓库根）指定的指令文件随 diff 一起作为 system prompt 发给 AI（提交信息与冲突解决均生效），不存在则忽略。
+
 **Command 方式**：支持任意 CLI（Codex / OpenCode / Pi / Ollama / 自定义程序）。
 
 ```toml

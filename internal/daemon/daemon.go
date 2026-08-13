@@ -34,25 +34,27 @@ func Run(globalPath string, once bool) error {
 			}
 		}
 
-		repos := cfg.Repos
+		repos := cfg.Repos.All()
 		if len(repos) == 0 {
 			if wd, err := os.Getwd(); err == nil {
-				repos = []string{wd}
+				repos = []config.Repo{{Path: wd}}
 			}
 		}
 		for _, r := range repos {
+			repoPath := r.ExpandedPath()
+			disp := r.DisplayName()
 			rcfg := cfg
-			if merged, err := config.Load(globalPath, r); err == nil {
+			if merged, err := config.Load(globalPath, repoPath); err == nil {
 				rcfg = merged
 			}
-			rep := sync.Sync(r, rcfg, func(f string, a ...any) {
-				logf("[%s] %s", r, fmt.Sprintf(f, a...))
+			rep := sync.Sync(repoPath, rcfg, func(f string, a ...any) {
+				logf("[%s] %s", disp, fmt.Sprintf(f, a...))
 			})
 			for _, s := range rep.Steps {
-				logf("[%s] %s", r, s)
+				logf("[%s] %s", disp, s)
 			}
 			if rep.Err != nil {
-				logf("[%s] ERROR: %v", r, rep.Err)
+				logf("[%s] ERROR: %v", disp, rep.Err)
 			}
 		}
 		if once {

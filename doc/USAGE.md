@@ -72,10 +72,15 @@ push（远端有更新时自动重新 fetch + merge，最多 3 轮）
 ```
 
 ```bash
-gns sync                # 同步当前目录仓库
-gns sync -repo ~/notes  # 指定仓库
+gns sync                # 同步当前目录仓库（默认）
+gns sync notes          # 按配置中的 repo 名字同步
+gns sync ~/notes        # 或直接给路径
+gns sync -p ~/notes     # -p/-repo 指定路径（等价）
 gns sync -c my.toml     # 指定配置文件
+gns sync-all            # 同步配置中所有 repos（等价 daemon 一轮）
 ```
+
+> 位置参数解析规则：先匹配配置 repos 列表中的 name/path（支持 `~/` 展开），未命中则当作路径。`status` / `commit` / `resolve` 同样支持 `gns status notes` 这种写法。
 
 ### `gns commit` — 立即提交
 
@@ -120,6 +125,17 @@ gns resolve --ai                 # ④ AI 逐文件语义合并（需配置 [ai]
 ```
 
 > `--ours` / `--theirs` 是一次性处理**所有**冲突文件；AI 失败的单个文件会保留 markers 并跳过，不丢数据。
+
+### `gns repos` — 多仓库管理
+
+维护全局配置中的 repos 列表（写入 `[[repos]]` 表，保留文件其他内容和注释）：
+
+```bash
+gns repos list                    # 列出 name + path
+gns repos add ~/notes -name notes # 添加（-name 省略时用目录名）
+gns repos del notes               # 删除（按 name 或 path）
+gns repos add ~/wiki -c my.toml   # 指定配置文件（默认全局配置）
+```
 
 ### `gns daemon` — 轻量常驻（Windows 首选）
 
@@ -175,6 +191,7 @@ gns help                # 命令帮助
 | `[ai] command` | 空 | command 模式的 CLI 命令 |
 | `[ai] timeout` | `60` | AI 调用超时（秒） |
 | `[ai] max_diff_bytes` | `51200` | 发送给 AI 的 diff 截断上限 |
+| `[ai] agent_file` | `"AGENTS.md"` | 仓库级 agent 指令文件（相对仓库根），随 diff 一起发给 AI；文件不存在则忽略 |
 
 ### 4.3 完整示例
 
@@ -259,7 +276,24 @@ gns daemon
 
 ## 6. AI 集成（可选）
 
-### 6.1 API 方式（OpenAI 兼容）
+### 6.1 提交信息模式说明
+
+`commit_message` 三种模式（示例见 §3 `notes commit` 章节）：
+
+- **`timestamp`**（默认）：时间戳 + diff 摘要，如：
+
+  ```
+  notes: 2026-08-13 11:30
+
+   files: 3 changed, +42, -8
+   - docroot/10-note/mac/aerospace.md (+20, -3)
+   - docroot/20-collect/draft.md (+7)
+  ```
+
+- **`static`**：固定文本（`commit_static_message`，默认 `"notes: auto sync"`）+ 同样的 diff 摘要，适合希望提交信息稳定可搜索的场景（如同步插件过滤）
+- **`ai`**：AI 根据 diff 生成语义化信息；失败自动降级到 `ai_fallback`
+
+### 6.2 API 方式（OpenAI 兼容）
 
 ```toml
 [ai]
@@ -279,7 +313,11 @@ command = "codex exec --format openai ..."   # 或 ollama run qwen2.5 / 自定�
 
 约定：**stdin = git diff（或待解决冲突文件内容），stdout = 提交信息（或解决结果）**。退出码非 0 或超时视为失败。
 
-### 6.3 降级机制（重要）
+### 6.3 Agent 指令文件
+
+`[ai] agent_file`（默认 `AGENTS.md`）指向仓库根的一个指令文件，内容会随 diff 一起作为 system prompt 的一部分发给 AI——适合固定提交风格、语言、排除规则等（例如要求提交信息用中文、标注 breaking change）。文件不存在时静默忽略，不影响调用。
+
+### 6.4 降级机制（重要）
 
 AI 是**增强而非依赖**：API 不可用、网络错误、quota 用尽、CLI 未安装、返回格式异常、超时——任何失败自动按 `ai_fallback` 降级（默认 timestamp 摘要），**同步链路不受任何影响**。
 

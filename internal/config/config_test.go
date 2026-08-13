@@ -1,0 +1,119 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func writeTemp(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestReposSimpleArray(t *testing.T) {
+	p := writeTemp(t, "repos = [\"~/notes\", \"/work/wiki\"]\n")
+	cfg, err := Load(p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Repos.Len() != 2 {
+		t.Fatalf("expected 2 repos, got %d", cfg.Repos.Len())
+	}
+	all := cfg.Repos.All()
+	if all[0].Path != "~/notes" || all[1].Path != "/work/wiki" {
+		t.Fatalf("unexpected paths: %+v", all)
+	}
+	if all[0].DisplayName() != "~/notes" {
+		t.Fatalf("simple repo should fall back to path as name")
+	}
+}
+
+func TestReposNamedTables(t *testing.T) {
+	p := writeTemp(t, `
+[[repos]]
+name = "notes"
+path = "~/notes"
+
+[[repos]]
+name = "wiki"
+path = "/work/wiki"
+`)
+	cfg, err := Load(p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := cfg.Repos.All()
+	if len(all) != 2 {
+		t.Fatalf("expected 2 repos, got %d", len(all))
+	}
+	if all[0].Name != "notes" || all[0].Path != "~/notes" {
+		t.Fatalf("unexpected repo0: %+v", all[0])
+	}
+	if all[0].DisplayName() != "notes" {
+		t.Fatalf("named repo should use name")
+	}
+	if got, ok := cfg.Repos.Find("wiki"); !ok || got.Path != "/work/wiki" {
+		t.Fatalf("Find by name failed: %+v", got)
+	}
+}
+
+func TestReposMergedWithOtherKeys(t *testing.T) {
+	p := writeTemp(t, `auto_commit = false
+commit_debounce = 10
+
+[[repos]]
+name = "notes"
+path = "~/notes"
+`)
+	cfg, err := Load(p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AutoCommit {
+		t.Fatal("auto_commit should be false")
+	}
+	if cfg.CommitDebounce != 10 {
+		t.Fatalf("commit_debounce should be 10, got %d", cfg.CommitDebounce)
+	}
+	if cfg.Repos.Len() != 1 {
+		t.Fatalf("expected 1 repo")
+	}
+}
+
+func TestExpandPath(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	cases := map[string]string{
+		"~/notes":  filepath.Join(home, "notes"),
+		"~":        home,
+		"/abs/p":   "/abs/p",
+		"rel/path": mustAbs(t, "rel/path"),
+	}
+	for in, want := range cases {
+		if got := expandPath(in); got != want {
+			t.Errorf("expandPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func mustAbs(t *testing.T, p string) string {
+	t.Helper()
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
+}
+
+func TestExpandPathHomePrefix(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	got := expandPath("~/a/b")
+	if !strings.HasPrefix(got, home) || !strings.HasSuffix(got, "a/b") {
+		t.Fatalf("unexpected expansion: %q", got)
+	}
+}

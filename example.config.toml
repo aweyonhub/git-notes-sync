@@ -34,8 +34,21 @@ api_key_env = "NOTES_AI_API_KEY"   # key read from this environment variable
 # command = "codex exec --format openai ..."
 timeout = 60                  # seconds
 max_diff_bytes = 51200        # cap the diff sent to the AI
+agent_file = "AGENTS.md"      # repo-relative agent instructions file, sent
+                              # with the diff (default AGENTS.md; missing = ignored)
 
 # ---- daemon (global config only) ---------------------------------------
 sync_interval = 60            # seconds between ticks
 retry_attempts = 3            # fetch/push retries (exponential backoff)
-repos = ["~/notes", "~/work/wiki"]   # repos the daemon loops over; empty = cwd
+
+# 多仓库列表（daemon / gns sync-all 使用；两种写法等价）：
+# 写法一：简单数组（显示名 = 路径）
+# repos = ["~/notes", "~/work/wiki"]
+# 写法二：命名表（可用 gns repos add/del 维护）
+[[repos]]
+name = "notes"
+path = "~/notes"
+
+[[repos]]
+name = "wiki"
+path = "~/work/wiki"

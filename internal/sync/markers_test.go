@@ -11,7 +11,7 @@ import (
 
 func newGitRunner(dir string) *git.Runner { return git.NewRunner(dir) }
 
-func newAIGen(cfg *config.AI) *ai.Generator { return ai.NewGenerator(cfg) }
+func newAIGen(cfg *config.AI) *ai.Generator { return ai.NewGenerator(cfg, "") }
 
 func TestApplyMode(t *testing.T) {
 	src := `# title

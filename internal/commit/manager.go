@@ -122,7 +122,7 @@ func (m *Manager) message(g *git.Runner, mode, summary string) (string, error) {
 	}
 	switch mode {
 	case config.MessageAI:
-		gen := ai.NewGenerator(&m.Cfg.AI)
+		gen := ai.NewGenerator(&m.Cfg.AI, m.Repo)
 		if gen.Enabled() {
 			diff, err := g.CachedDiff(m.Cfg.AI.MaxDiffBytes)
 			if err == nil && strings.TrimSpace(diff) != "" {

@@ -29,16 +29,16 @@ const (
 
 // Config is the merged tool configuration.
 type Config struct {
-	AutoCommit      bool     `toml:"auto_commit"`
-	CommitDebounce  int      `toml:"commit_debounce"`
-	CommitMaxWait   int      `toml:"commit_max_wait"`
-	CommitMessage   string   `toml:"commit_message"` // timestamp | static | ai
-	CommitStaticMsg string   `toml:"commit_static_message"`
-	AIFallback      string   `toml:"ai_fallback"`     // timestamp | static
-	BinaryStrategy  string   `toml:"binary_strategy"` // ours | abort
-	SyncInterval    int      `toml:"sync_interval"`   // daemon tick, seconds
-	RetryAttempts   int      `toml:"retry_attempts"`
-	Repos           []string `toml:"repos"` // daemon multi-repo list
+	AutoCommit      bool   `toml:"auto_commit"`
+	CommitDebounce  int    `toml:"commit_debounce"`
+	CommitMaxWait   int    `toml:"commit_max_wait"`
+	CommitMessage   string `toml:"commit_message"` // timestamp | static | ai
+	CommitStaticMsg string `toml:"commit_static_message"`
+	AIFallback      string `toml:"ai_fallback"`     // timestamp | static
+	BinaryStrategy  string `toml:"binary_strategy"` // ours | abort
+	SyncInterval    int    `toml:"sync_interval"`   // daemon tick, seconds
+	RetryAttempts   int    `toml:"retry_attempts"`
+	Repos           Repos  `toml:"repos"` // daemon/sync-all multi-repo list
 
 	Conflict Conflict `toml:"conflict"`
 	AI       AI       `toml:"ai"`
@@ -57,6 +57,7 @@ type AI struct {
 	Command      string `toml:"command"`
 	TimeoutSec   int    `toml:"timeout"`
 	MaxDiffBytes int    `toml:"max_diff_bytes"`
+	AgentFile    string `toml:"agent_file"` // repo-relative instructions file, sent with the diff
 }
 
 // Defaults returns the built-in defaults.
@@ -82,8 +83,102 @@ func Defaults() *Config {
 			APIKeyEnv:    "NOTES_AI_API_KEY",
 			TimeoutSec:   60,
 			MaxDiffBytes: 50 * 1024,
+			AgentFile:    "AGENTS.md",
 		},
 	}
+}
+
+// Repo is one entry of the repos list.
+type Repo struct {
+	Name string `toml:"name"` // optional display name
+	Path string `toml:"path"` // may contain ~/
+}
+
+// DisplayName returns the name used in logs/lists, falling back to path.
+func (r Repo) DisplayName() string {
+	if r.Name != "" {
+		return r.Name
+	}
+	return r.Path
+}
+
+// ExpandedPath resolves ~/ and relative paths for actual use.
+func (r Repo) ExpandedPath() string { return expandPath(r.Path) }
+
+// Repos accepts both TOML forms:
+//
+//	repos = ["~/notes", "~/wiki"]          (simple, name = path)
+//
+//	[[repos]]
+//	name = "notes"
+//	path = "~/notes"                       (named)
+type Repos struct {
+	list []Repo
+}
+
+func (r *Repos) UnmarshalTOML(data any) error {
+	switch v := data.(type) {
+	case []map[string]any:
+		for _, m := range v {
+			rep := Repo{}
+			if s, ok := m["name"].(string); ok {
+				rep.Name = s
+			}
+			if s, ok := m["path"].(string); ok {
+				rep.Path = s
+			}
+			if rep.Path == "" {
+				continue
+			}
+			r.list = append(r.list, rep)
+		}
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				r.list = append(r.list, Repo{Path: s})
+			}
+		}
+	}
+	return nil
+}
+
+// All returns a copy of the repo list.
+func (r *Repos) All() []Repo {
+	out := make([]Repo, len(r.list))
+	copy(out, r.list)
+	return out
+}
+
+func (r *Repos) Len() int { return len(r.list) }
+
+// Find matches a repo by name or path (exact, then prefix on path).
+func (r *Repos) Find(nameOrPath string) (Repo, bool) {
+	for _, rep := range r.list {
+		if rep.Name == nameOrPath || rep.Path == nameOrPath {
+			return rep, true
+		}
+	}
+	return Repo{}, false
+}
+
+// expandPath resolves ~/ and relative paths to absolute paths.
+func expandPath(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	if p == "~" && home != "" {
+		return home
+	}
+	if strings.HasPrefix(p, "~/") && home != "" {
+		return filepath.Join(home, p[2:])
+	}
+	if !filepath.IsAbs(p) {
+		if abs, err := filepath.Abs(p); err == nil {
+			return abs
+		}
+	}
+	return p
 }
 
 // GlobalPath returns the default global config file location.
