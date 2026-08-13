@@ -72,7 +72,7 @@ func (m *Manager) CommitIfNeeded(automatic bool) (bool, error) {
 }
 
 // CommitNow explicitly commits regardless of debounce, with an optional
-// message mode override ("ai" for `notes commit-ai`).
+// message mode override ("ai" for `gns commit-ai`).
 func (m *Manager) CommitNow(mode string) (bool, error) {
 	g := git.NewRunner(m.Repo)
 	entries, err := g.Status()

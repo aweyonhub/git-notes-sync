@@ -28,7 +28,7 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
             go build -trimpath -ldflags "-s -w" \
-            -o dist/notes-sync-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} .
+            -o dist/gns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} .
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:

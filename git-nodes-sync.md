@@ -109,7 +109,7 @@ binary conflict → 独立策略（保留本地副本 / 停止并提示）
 
 - 通用文本冲突策略，不写死 Markdown；通过扩展名或 Git 检测区分 text / binary。
 - Markdown / Notes 作为默认 preset，而非底层限制。
-- `notes resolve` 处理已持久化的 markers，供用户或 Agent 批量语义解决。
+- `gns resolve` 处理已持久化的 markers，供用户或 Agent 批量语义解决。
 
 **配置**：
 
@@ -197,7 +197,7 @@ ai_fallback = "timestamp"
 
 **方式一：OS 定时任务**（Linux / macOS 首选）
 
-- Linux cron / macOS launchd 定时触发 `notes sync`，工具本身不管理进程生命周期。
+- Linux cron / macOS launchd 定时触发 `gns sync`，工具本身不管理进程生命周期。
 - 每次无状态运行，OS 负责调度与恢复。
 - 适合 Unix 环境，cron 开箱即用。
 
@@ -212,7 +212,7 @@ ai_fallback = "timestamp"
 
 - 定时 poll 远端：周期 fetch，发现远端新内容即同步。
 - 定时提交检查：周期检查工作区修改，结合 debounce 决定是否提交。
-- 多仓库：逐个执行 `notes sync`，无需额外管理机制。
+- 多仓库：逐个执行 `gns sync`，无需额外管理机制。
 
 > **不引入 filesystem watcher**：本工具面向笔记 / 文档仓库，非大型工程项目。watcher 需处理跨平台差异、递归监听、事件去重、资源占用等复杂问题，对当前场景属于过度设计。定时轮询足够覆盖需求，且实现简单、行为可预期。
 
@@ -232,12 +232,12 @@ ai_fallback = "timestamp"
 ### 4.7 命令行接口（CLI） · 交互层
 
 ```bash
-notes sync         # 同步已有 commit（核心命令）
-notes commit       # 提交当前修改
-notes commit-ai    # AI 生成 message 后提交
-notes status       # 显示工作区、远端及待处理冲突
-notes resolve      # 处理已持久化的 conflict markers
-notes daemon       # 启动轻量 daemon（可选，Windows 首选）
+gns sync         # 同步已有 commit（核心命令）
+gns commit       # 提交当前修改
+gns commit-ai    # AI 生成 message 后提交
+gns status       # 显示工作区、远端及待处理冲突
+gns resolve      # 处理已持久化的 conflict markers
+gns daemon       # 启动轻量 daemon（可选，Windows 首选）
 ```
 
 ### 4.8 技术选型（Tech Stack） · 交互层
@@ -261,17 +261,18 @@ npm install -g github:user/git-notes-sync
 
 1. **交叉编译**：Go 交叉编译各平台二进制（`windows/amd64`、`darwin/amd64`、`darwin/arm64`、`linux/amd64`、`linux/arm64`），通过 GitHub Actions 流水线自动构建并发布到 GitHub Releases（或预构建提交到仓库）。
 2. **npm 包壳**：npm 包本身不含二进制，仅包含 `postinstall` 脚本和平台映射表。
-3. **postinstall 下载**：安装时检测当前 OS / arch，从 GitHub Releases 下载对应二进制到 `node_modules/.bin/`。
+3. **postinstall 下载**：安装时检测当前 OS / arch，从 GitHub Releases 下载对应二进制到包内固定路径 `bin/gns.exe`（全平台统一文件名）。
+4. **bin 直接链接二进制**：`package.json` 的 `bin` 字段直接指向 `bin/gns.exe`，npm 把原生二进制本身链接到 `node_modules/.bin/` —— **无 JS 路由中间层**。
 
 **平台映射示例**：
 
 ```json
 {
-  "darwin-arm64": "notes-sync-darwin-arm64",
-  "darwin-x64": "notes-sync-darwin-amd64",
-  "win32-x64": "notes-sync-windows-amd64.exe",
-  "linux-x64": "notes-sync-linux-amd64",
-  "linux-arm64": "notes-sync-linux-arm64"
+  "darwin-arm64": "gns-darwin-arm64",
+  "darwin-x64": "gns-darwin-amd64",
+  "win32-x64": "gns-windows-amd64.exe",
+  "linux-x64": "gns-linux-amd64",
+  "linux-arm64": "gns-linux-arm64"
 }
 ```
 
@@ -309,16 +310,16 @@ npm install -g github:user/git-notes-sync
 
 | # | 疑问 | 决策 |
 |---|------|------|
-| 1 | 命令名 | Go 二进制 `notes-sync`；npm bin 同时注册 `notes` / `notes-sync`，文档示例按 `notes ...` 使用 |
+| 1 | 命令名 | Go 二进制 `gns`；npm bin 注册 `gns`（主）+ `notes-sync`（别名），文档示例按 `gns ...` 使用（2026-08-13 定） |
 | 2 | 配置文件位置 | 仓库根 `.notes-sync.toml` + 全局 `~/.config/git-notes-sync/config.toml`（Windows 为 `%APPDATA%`，经 `os.UserConfigDir()`）；仓库级覆盖全局；另有 `-c` 显式指定 |
-| 3 | 多仓库 | `notes sync` 默认当前目录；daemon 遍历全局配置 `repos = [...]`，为空则当前目录 |
+| 3 | 多仓库 | `gns sync` 默认当前目录；daemon 遍历全局配置 `repos = [...]`，为空则当前目录 |
 | 4 | debounce / max_wait 计时 | cron 无状态运行无法记住"首次发现"时间，因此在 `.git/git-notes-sync.state` 记录 first_seen：`now - mtime < debounce` 推迟；`now - first_seen >= max_wait` 强制提交（即使文件仍在编辑）。删除文件不参与 debounce |
 | 5 | auto_commit=false 且工作区脏 | merge 由 git 原生拒绝覆盖本地修改；跳过该仓库并提示，不破坏工作区 |
 | 6 | 二进制冲突 | 新增 `binary_strategy = "ours" \| "abort"`：ours 保留本地副本（checkout --ours）并继续；abort 中止 merge |
 | 7 | 冲突策略 | `[conflict] strategy = "preserve" \| "abort"`：preserve = 保留 markers + merge commit + push；abort = merge --abort 并报错 |
 | 8 | text/binary 判定 | 扩展名命中 `text_extensions` 视为文本；否则嗅探前 8KB 是否含 NUL |
 | 9 | resolve 识别冲突文件 | `git grep` 匹配 `^<<<<<<< ` / `^>>>>>>> `（兼容 CRLF 行尾）+ `ls-files -u` 双路检测 |
-| 10 | 冲突批量语义解决调度 | `notes resolve`（默认列出）→ `--ours` / `--theirs` / `--ai`；AI 失败保留 markers 不丢数据；解决后 add + commit + push；daemon 不做自动语义解决 |
+| 10 | 冲突批量语义解决调度 | `gns resolve`（默认列出）→ `--ours` / `--theirs` / `--ai`；AI 失败保留 markers 不丢数据；解决后 add + commit + push；daemon 不做自动语义解决 |
 | 11 | AI 输入大小 | `git diff --cached` 截断到 `max_diff_bytes`（默认 50KB） |
 | 12 | retry | fetch/push 各 `retry_attempts`（默认 3）次，退避 2s/4s/8s；push 因远端移动被拒时自动重 fetch + 重 merge，最多 3 轮 |
 | 13 | 并发锁 | `.git/git-notes-sync.lock`（O_EXCL + PID），10 分钟过期清理 |

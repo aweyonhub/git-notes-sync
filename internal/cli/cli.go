@@ -1,4 +1,4 @@
-// Package cli implements the `notes` command line interface.
+// Package cli implements the `gns` command line interface.
 package cli
 
 import (
@@ -17,13 +17,15 @@ import (
 const usageText = `git-notes-sync %s — auto-sync for notes-style git workspaces
 
 usage:
-  notes sync [flags]        sync repo: commit → fetch → merge → push
-  notes commit [flags]      commit current changes immediately
-  notes commit-ai [flags]   commit with an AI-generated message
-  notes status [flags]      show worktree / remote / conflict status
-  notes resolve [flags]     list or resolve persisted conflict markers
-  notes daemon [flags]      run the lightweight timer daemon
-  notes version
+  gns sync [flags]        sync repo: commit → fetch → merge → push
+  gns commit [flags]      commit current changes immediately
+  gns commit-ai [flags]   commit with an AI-generated message
+  gns status [flags]      show worktree / remote / conflict status
+  gns resolve [flags]     list or resolve persisted conflict markers
+  gns daemon [flags]      run the lightweight timer daemon
+  gns version
+
+(alias: notes-sync)
 
 flags (per command):
   -c path      config file (default: global config + ./.notes-sync.toml)
@@ -71,7 +73,7 @@ func Run(args []string) error {
 		fmt.Printf(usageText, version.Version)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q (see: notes help)", cmd)
+		return fmt.Errorf("unknown command %q (see: gns help)", cmd)
 	}
 }
 

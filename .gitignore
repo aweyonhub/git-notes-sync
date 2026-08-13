@@ -3,7 +3,7 @@
 /dist
 
 # npm package shell (binary downloaded at install time)
-/npm/bin/notes-sync-*
+/npm/bin/gns.exe
 
 # test artifacts
 *.test

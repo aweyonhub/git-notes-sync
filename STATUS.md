@@ -11,7 +11,7 @@
 | # | 开放问题 | 采用方案 | 状态 |
 |---|---------|---------|------|
 | 1 | 是否内置纯 Go Git 实现 | 不做，调用系统 Git（规格 §1.3 非目标），`internal/git` 留替换扩展点 | ✅ 已落地 |
-| 2 | 冲突批量语义解决的调度方式 | `notes resolve --ours/--theirs/--ai` 手动触发；daemon 不做自动语义解决；AI 失败保留 markers 不丢数据 | ✅ 已落地 |
+| 2 | 冲突批量语义解决的调度方式 | `gns resolve --ours/--theirs/--ai` 手动触发；daemon 不做自动语义解决；AI 失败保留 markers 不丢数据 | ✅ 已落地 |
 | 3 | 定时任务间隔推荐值 | daemon `sync_interval=60s`（最小 5s）；cron 建议 `*/5 * * * *` | ✅ 已落地 |
 
 ### 1.2 开发中歧义 → 默认决策（共 19 项，详见 spec §七）
@@ -20,7 +20,7 @@
 
 | 歧义 | 默认决策 |
 |------|---------|
-| 命令名 | 二进制 `notes-sync`；npm bin 注册 `notes` + `notes-sync` 两个别名 |
+| 命令名 | 二进制 `gns`；npm bin 注册 `gns`（主）+ `notes-sync`（别名） |
 | 配置文件位置 | 仓库 `.notes-sync.toml` + 全局 `~/.config/git-notes-sync/config.toml`，仓库覆盖全局 |
 | debounce/max_wait 计时 | 基于 `.git/git-notes-sync.state` 记录 first_seen，跨 cron 无状态运行仍可兜底 |
 | 二进制冲突 | `binary_strategy = "ours"`（保留本地副本）默认 |
@@ -30,7 +30,7 @@
 ### 1.3 待用户拍板（不阻塞开发，可随时改）
 
 - [ ] **GitHub 仓库地址**：npm 壳与 Actions 中 `git-notes-sync/git-notes-sync` 为占位符
-- [ ] **命令名 `notes`** 是否接受（太通用可与系统命令冲突；备选：仅保留 `notes-sync`）
+- [x] **命令名**：已确认使用 `gns`（2026-08-13）；npm 同时提供 `notes-sync` 别名
 - [ ] **国内网络**：是否追加 `GOPROXY=https://goproxy.cn,direct` 到 bashrc
 - [ ] **Windows 本机**：是否安装 Go（WSL 已装 `~/go-sdk/go`，仅开发需要）
 
@@ -81,7 +81,7 @@
 | P0 | 验证 `npm install -g github:...` 全链路 | 在干净环境（无 Go）实测 postinstall 下载 + bin 可用 |
 | P1 | 真实 AI endpoint 冒烟 | 本地 Ollama 或任意 OpenAI-compatible 服务验证 `commit_message="ai"` 与 `resolve --ai` |
 | P1 | Windows 实机验证 | daemon 行为、credential helper / SSH 环境继承、autocrlf 场景 |
-| P2 | `notes resolve` 交互式模式 | 逐个文件选择 ours/theirs/AI（当前为全局 flag 一次性处理） |
+| P2 | `gns resolve` 交互式模式 | 逐个文件选择 ours/theirs/AI（当前为全局 flag 一次性处理） |
 | P2 | cron 示例文档完善 | README 已有 `*/5 * * * *` 示例，可补充 launchd plist 模板 |
 | P3 | 可选增强 | `notes init` 生成示例配置；`--repo` 支持多仓库批量 sync |
 
@@ -89,5 +89,5 @@
 
 - **二进制冲突"保留本地副本"** 意味着远端版本被覆盖——属规格内决策（`binary_strategy=ours`），重要二进制建议改 `abort`
 - **max_wait 强制提交** 可能在文件写入中途截断内容（规格明确接受的兜底行为）
-- **merge 阻塞场景**（auto_commit=off + 工作区脏 + 远端更新同文件）：跳过该仓库并提示，需人工 `notes commit` 后重试
+- **merge 阻塞场景**（auto_commit=off + 工作区脏 + 远端更新同文件）：跳过该仓库并提示，需人工 `gns commit` 后重试
 - **AI 语义合并质量**不可控，`resolve --ai` 输出建议人工复核后提交（当前即如此：写盘→可 git diff 检查→提交）

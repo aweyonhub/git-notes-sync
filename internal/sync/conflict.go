@@ -58,7 +58,7 @@ func handleConflicts(g *git.Runner, paths []string, cfg *config.Config, rep *Rep
 				return err
 			}
 		}
-		rep.logf("text conflicts preserved (markers kept, resolve later with `notes resolve`): %s", strings.Join(texts, ", "))
+		rep.logf("text conflicts preserved (markers kept, resolve later with `gns resolve`): %s", strings.Join(texts, ", "))
 	}
 
 	if err := g.CommitMerge(); err != nil {

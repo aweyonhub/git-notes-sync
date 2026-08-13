@@ -13,10 +13,10 @@
 npm install -g github:git-notes-sync/git-notes-sync
 ```
 
-安装过程自动按平台从 GitHub Releases 下载对应二进制。安装后提供两个等价命令：
+安装过程自动按平台从 GitHub Releases 下载对应二进制到包内 `bin/gns.exe`，npm 的 `bin` 字段直接链接该原生二进制（无 JS 路由层）。安装后提供两个等价命令：
 
 ```bash
-notes --version        # 或 notes-sync --version
+gns --version        # 或 notes-sync --version
 ```
 
 ### 方式二：手动构建（需要 Go 1.22+）
@@ -38,8 +38,8 @@ make cross            # 交叉编译全部 5 平台到 dist/
 ```bash
 cd ~/notes                          # 进入笔记仓库
 
-notes status                        # ① 查看仓库状态（分支/落后领先/冲突）
-notes sync                          # ② 手动同步一次：commit → fetch → merge → push
+gns status                        # ① 查看仓库状态（分支/落后领先/冲突）
+gns sync                          # ② 手动同步一次：commit → fetch → merge → push
 
 # ③（可选）仓库级配置，控制提交时机等
 cp example.config.toml .notes-sync.toml
@@ -47,13 +47,13 @@ cp example.config.toml .notes-sync.toml
 # ④（可选）配置定时任务，见「5. 定时调度」
 ```
 
-首次运行建议先在终端手动执行 `notes sync`，确认输出正常后再配置定时任务。
+首次运行建议先在终端手动执行 `gns sync`，确认输出正常后再配置定时任务。
 
 ---
 
 ## 3. 命令详解
 
-### `notes sync` — 核心同步命令
+### `gns sync` — 核心同步命令
 
 执行完整同步流程：
 
@@ -72,29 +72,29 @@ push（远端有更新时自动重新 fetch + merge，最多 3 轮）
 ```
 
 ```bash
-notes sync                # 同步当前目录仓库
-notes sync -repo ~/notes  # 指定仓库
-notes sync -c my.toml     # 指定配置文件
+gns sync                # 同步当前目录仓库
+gns sync -repo ~/notes  # 指定仓库
+gns sync -c my.toml     # 指定配置文件
 ```
 
-### `notes commit` — 立即提交
+### `gns commit` — 立即提交
 
 ```bash
-notes commit              # 忽略 debounce，立即提交当前所有修改
-notes commit -message "自定义信息"
-notes commit -force       # 显式强制（默认 commit 即忽略时机）
+gns commit              # 忽略 debounce，立即提交当前所有修改
+gns commit -message "自定义信息"
+gns commit -force       # 显式强制（默认 commit 即忽略时机）
 ```
 
-### `notes commit-ai` — AI 提交
+### `gns commit-ai` — AI 提交
 
 ```bash
-notes commit-ai           # AI 根据 diff 生成提交信息；AI 不可用时自动降级
+gns commit-ai           # AI 根据 diff 生成提交信息；AI 不可用时自动降级
 ```
 
-### `notes status` — 状态查看
+### `gns status` — 状态查看
 
 ```bash
-notes status
+gns status
 ```
 
 输出示例：
@@ -110,32 +110,32 @@ conflicts: 1 file(s)
   docroot/20-collect/draft.md (2 block(s))
 ```
 
-### `notes resolve` — 处理持久化的冲突
+### `gns resolve` — 处理持久化的冲突
 
 ```bash
-notes resolve                      # ① 列出含冲突 markers 的文件（默认）
-notes resolve --ours               # ② 全部保留本地版本，去 markers，提交并推送
-notes resolve --theirs             # ③ 全部保留远端版本，去 markers，提交并推送
-notes resolve --ai                 # ④ AI 逐文件语义合并（需配置 [ai]）
+gns resolve                      # ① 列出含冲突 markers 的文件（默认）
+gns resolve --ours               # ② 全部保留本地版本，去 markers，提交并推送
+gns resolve --theirs             # ③ 全部保留远端版本，去 markers，提交并推送
+gns resolve --ai                 # ④ AI 逐文件语义合并（需配置 [ai]）
 ```
 
 > `--ours` / `--theirs` 是一次性处理**所有**冲突文件；AI 失败的单个文件会保留 markers 并跳过，不丢数据。
 
-### `notes daemon` — 轻量常驻（Windows 首选）
+### `gns daemon` — 轻量常驻（Windows 首选）
 
 ```bash
-notes daemon              # 按 sync_interval（默认 60s）定时同步所有 repos
-notes daemon --once       # 只跑一轮（可用于测试）
-notes daemon -c my.toml   # 指定全局配置
+gns daemon              # 按 sync_interval（默认 60s）定时同步所有 repos
+gns daemon --once       # 只跑一轮（可用于测试）
+gns daemon -c my.toml   # 指定全局配置
 ```
 
 daemon 只做两件事：内部 timer 周期触发同步、缓存配置（配置变更自动热重载）。不做 watcher、无状态持久化。
 
-### `notes version` / `notes help`
+### `gns version` / `gns help`
 
 ```bash
-notes version             # 版本号
-notes help                # 命令帮助
+gns version             # 版本号
+gns help                # 命令帮助
 ```
 
 ---
@@ -214,7 +214,7 @@ max_diff_bytes = 51200
 ```bash
 crontab -e
 # 每 5 分钟同步一次（注意：cron 环境变量很少，需保证 git 可达、凭据可用）
-*/5 * * * * cd /home/me/notes && /usr/bin/env notes sync >> /tmp/notes-sync.log 2>&1
+*/5 * * * * cd /home/me/notes && /usr/bin/env gns sync >> /tmp/gns-sync.log 2>&1
 ```
 
 ### macOS — launchd
@@ -240,10 +240,10 @@ launchctl load ~/Library/LaunchAgents/com.git-notes-sync.plist
 **方式一：daemon**
 
 ```bash
-notes daemon
+gns daemon
 ```
 
-启动后每 60s 自动同步所有 `repos`。开机自启：将 `notes daemon` 放入「启动」文件夹或任务计划程序。异常退出后重启即恢复，无状态恢复逻辑。
+启动后每 60s 自动同步所有 `repos`。开机自启：将 `gns daemon` 放入「启动」文件夹或任务计划程序。异常退出后重启即恢复，无状态恢复逻辑。
 
 **方式二：任务计划程序**
 
@@ -295,19 +295,19 @@ AI 是**增强而非依赖**：API 不可用、网络错误、quota 用尽、CLI
 
 1. 冲突文件保留双方内容与 markers（`<<<<<<<` / `=======` / `>>>>>>>`）
 2. 自动 `git add` + merge commit + push —— **同步继续，不中断**
-3. 冲突内容已提交到历史，随时可用 `notes resolve` 事后解决
+3. 冲突内容已提交到历史，随时可用 `gns resolve` 事后解决
 
 ### 7.3 解决流程
 
 ```bash
-notes status          # 查看冲突文件
-notes resolve         # 列出含 markers 的文件及块数
+gns status          # 查看冲突文件
+gns resolve         # 列出含 markers 的文件及块数
 # 人工/Agent 编辑后：
-notes commit           # 提交解决结果
+gns commit           # 提交解决结果
 # 或一键处理：
-notes resolve --ours      # 全部保留本地版本
-notes resolve --theirs    # 全部保留远端版本
-notes resolve --ai        # AI 语义合并（建议人工复核）
+gns resolve --ours      # 全部保留本地版本
+gns resolve --theirs    # 全部保留远端版本
+gns resolve --ai        # AI 语义合并（建议人工复核）
 ```
 
 ### 7.4 二进制冲突
@@ -323,7 +323,7 @@ notes resolve --ai        # AI 语义合并（建议人工复核）
 
 | 现象 | 原因与处理 |
 |------|-----------|
-| `merge origin/main failed: Your local changes ... would be overwritten` | `auto_commit=false` 且工作区有未提交修改与远端冲突。`notes commit` 或 stash 后重试 |
+| `merge origin/main failed: Your local changes ... would be overwritten` | `auto_commit=false` 且工作区有未提交修改与远端冲突。`gns commit` 或 stash 后重试 |
 | `push rejected (fetch first)` | 远端在你 fetch 后又更新。工具已自动重 fetch + 重 merge 重试（≤3 轮）；若仍失败说明远端持续移动，手动处理 |
 | `git is in MERGE_HEAD state` | 存在未完成的 merge/rebase（可能来自其他工具）。先手动完成或 `git merge --abort` |
 | `another sync is running (lock: ...)` | 上一次同步未正常结束。锁 10 分钟自动过期；也可删除 `.git/git-notes-sync.lock` |

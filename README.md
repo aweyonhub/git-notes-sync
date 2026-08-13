@@ -13,7 +13,7 @@ Go 实现，调用系统 Git，不重新实现 Git。详见 [git-nodes-sync.md](
 
 ```bash
 npm install -g github:git-notes-sync/git-notes-sync
-# 提供 notes / notes-sync 两个命令
+# 提供 gns（主命令）/ notes-sync（别名）
 ```
 
 安装时按平台从 GitHub Releases 下载对应二进制（`scripts/install.js` + 平台映射表）。
@@ -21,7 +21,7 @@ npm install -g github:git-notes-sync/git-notes-sync
 ### 手动构建
 
 ```bash
-make build          # 本机二进制 ./notes-sync
+make build          # 本机二进制 ./gns
 make cross          # 交叉编译全部平台到 dist/
 make test           # 集成测试（需要系统 git）
 ```
@@ -29,21 +29,21 @@ make test           # 集成测试（需要系统 git）
 ## 使用
 
 ```bash
-notes sync          # 核心命令：commit → fetch → merge → push
-notes commit        # 立即提交当前修改（忽略 debounce）
-notes commit-ai     # AI 生成 message 后提交
-notes status        # 工作区 / 远端 / 冲突状态
-notes resolve       # 列出已持久化的冲突 markers
-notes resolve --ours | --theirs   # 保留单侧，去 markers，提交并推送
-notes resolve --ai                # AI 语义合并（需配置 [ai]）
-notes daemon        # 轻量 daemon（Windows 首选，timer 轮询多仓库）
-notes version
+gns sync          # 核心命令：commit → fetch → merge → push
+gns commit        # 立即提交当前修改（忽略 debounce）
+gns commit-ai     # AI 生成 message 后提交
+gns status        # 工作区 / 远端 / 冲突状态
+gns resolve       # 列出已持久化的冲突 markers
+gns resolve --ours | --theirs   # 保留单侧，去 markers，提交并推送
+gns resolve --ai                # AI 语义合并（需配置 [ai]）
+gns daemon        # 轻量 daemon（Windows 首选，timer 轮询多仓库）
+gns version
 ```
 
 ### 定时调度
 
-- **Linux / macOS**：cron 无状态触发，建议 `*/5 * * * * cd ~/notes && notes sync`（cron 环境需完整：SSH agent、credential helper、PATH/HOME）。
-- **Windows**：`notes daemon`（内置 timer，默认 60s），配合任务计划程序开机自启；daemon 继承启动它的 shell 环境变量。
+- **Linux / macOS**：cron 无状态触发，建议 `*/5 * * * * cd ~/notes && gns sync`（cron 环境需完整：SSH agent、credential helper、PATH/HOME）。
+- **Windows**：`gns daemon`（内置 timer，默认 60s），配合任务计划程序开机自启；daemon 继承启动它的 shell 环境变量。
 
 ## 配置
 
@@ -73,7 +73,7 @@ api_key_env = "NOTES_AI_API_KEY"
 
 - **提交时机**：debounce 防打断编辑；`max_wait` 基于 `.git/git-notes-sync.state` 记录"首次发现修改"时间，跨 cron 无状态运行仍可兜底强制提交。
 - **提交信息**：`timestamp`/`static` 模式附带 diff 摘要（文件列表 + 行数增减）；`ai` 模式由 AI 生成（`git diff --cached` 截断到 `max_diff_bytes`），失败 fallback 到 `ai_fallback`。
-- **冲突不阻塞**：文本冲突保留双方内容与 markers → `git add` → merge commit → push；冲突成为可延迟解决的持久状态，`notes resolve` 事后处理。二进制冲突按 `binary_strategy` 保留本地副本或中止。
+- **冲突不阻塞**：文本冲突保留双方内容与 markers → `git add` → merge commit → push；冲突成为可延迟解决的持久状态，`gns resolve` 事后处理。二进制冲突按 `binary_strategy` 保留本地副本或中止。
 - **可靠性**：fetch/push 指数退避重试（`retry_attempts`）；`.git/git-notes-sync.lock` 防并发（10 分钟过期）；merge/rebase 进行中不叠加操作；push 被拒（远端移动）自动重 fetch + 重 merge，最多 3 轮。
 - **保护未提交内容**：merge 由 git 原生拒绝覆盖本地修改；此时跳过该仓库并提示。
 

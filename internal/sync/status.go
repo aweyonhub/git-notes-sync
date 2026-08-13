@@ -8,7 +8,7 @@ import (
 	"github.com/git-notes-sync/git-notes-sync/internal/git"
 )
 
-// Status renders a human-readable report for `notes status`.
+// Status renders a human-readable report for `gns status`.
 func Status(repo string) (string, error) {
 	g := git.NewRunner(repo)
 	if !g.IsRepo() {
