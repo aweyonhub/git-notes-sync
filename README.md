@@ -49,7 +49,7 @@ gns version
 
 ## 配置
 
-两层合并：全局 `~/.config/git-notes-sync/config.toml`（或 `%APPDATA%\git-notes-sync\config.toml`）→ 仓库 `.notes-sync.toml`。完整示例见 [example.config.toml](./example.config.toml)。
+**推荐**：所有参数统一放全局配置 `~/.config/git-notes-sync/config.toml`（或 `%APPDATA%\git-notes-sync\config.toml`），用 `gns repos add` 维护多仓库名单，**无需在每个项目里放配置**；仓库级 `.notes-sync.toml` 仅作为单仓库覆盖（一般没必要）。完整示例见 [example.config.toml](./example.config.toml)。
 
 ```toml
 auto_commit = true            # 是否自动提交工作区修改

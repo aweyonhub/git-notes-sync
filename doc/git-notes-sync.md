@@ -315,7 +315,7 @@ npm install -g github:user/git-notes-sync
 | # | 疑问 | 决策 |
 |---|------|------|
 | 1 | 命令名 | Go 二进制 `gns`；npm bin 注册 `gns`（主）+ `notes-sync`（别名），文档示例按 `gns ...` 使用（2026-08-13 定） |
-| 2 | 配置文件位置 | 仓库根 `.notes-sync.toml` + 全局 `~/.config/git-notes-sync/config.toml`（Windows 为 `%APPDATA%`，经 `os.UserConfigDir()`）；仓库级覆盖全局；另有 `-c` 显式指定 |
+| 2 | 配置文件位置 | 主推全局 `~/.config/git-notes-sync/config.toml`（Windows 为 `%APPDATA%`，经 `os.UserConfigDir()`）+ `gns repos add/del` 维护多仓库，一般无需仓库级配置；仓库根 `.notes-sync.toml` 作为可选覆盖（仓库 > 全局 > 默认）；另有 `-c` 显式指定 |
 | 3 | 多仓库 | `gns sync` 默认当前目录（支持按配置 repo 名字/路径定位）；daemon / `gns sync-all` 遍历配置 `repos` 列表；`gns repos list\|add\|del` 维护名单；`repos` 支持 `repos = [...]` 简单数组与 `[[repos]] name+path` 命名表两种写法；为空则当前目录 |
 | 4 | debounce / max_wait 计时 | cron 无状态运行无法记住"首次发现"时间，因此在 `.git/git-notes-sync.state` 记录 first_seen：`now - mtime < debounce` 推迟；`now - first_seen >= max_wait` 强制提交（即使文件仍在编辑）。删除文件不参与 debounce |
 | 5 | auto_commit=false 且工作区脏 | merge 由 git 原生拒绝覆盖本地修改；跳过该仓库并提示，不破坏工作区 |

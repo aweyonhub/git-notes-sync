@@ -41,10 +41,11 @@ cd ~/notes                          # 进入笔记仓库
 gns status                        # ① 查看仓库状态（分支/落后领先/冲突）
 gns sync                          # ② 手动同步一次：commit → fetch → merge → push
 
-# ③（可选）仓库级配置，控制提交时机等
-cp example.config.toml .notes-sync.toml
+# ③（推荐）多仓库场景：注册到全局配置，之后用名字同步
+gns repos add ~/notes -name notes  # 写入 ~/.config/git-notes-sync/config.toml
+gns sync-all                       # 同步全部仓库 / gns sync notes 同步单个
 
-# ④（可选）配置定时任务，见「5. 定时调度」
+# ④（可选）定时任务，见「5. 定时调度」；单仓库零配置也可直接用默认值
 ```
 
 首次运行建议先在终端手动执行 `gns sync`，确认输出正常后再配置定时任务。
@@ -168,6 +169,16 @@ gns help                # 命令帮助
 
 规则：后加载的覆盖先加载的（仓库 > 全局 > 默认）。也可用 `-c 文件` 显式指定并置于仓库配置之前加载。
 
+**推荐用法（本项目主推）：全局配置 + repos 列表**
+
+- **所有仓库参数统一放全局配置** `~/.config/git-notes-sync/config.toml`（Windows：`%APPDATA%\git-notes-sync\config.toml`），用 `gns repos add` 维护仓库名单，**无需在每个项目中放置配置文件**：
+  ```bash
+  gns repos add ~/notes -name notes     # 写入全局配置
+  gns sync notes / gns sync-all / gns daemon   # 按名字同步/全量同步/定时同步
+  ```
+- **仓库级 `.notes-sync.toml` 是可选的覆盖手段**：一般没必要使用；仅当某个仓库需要与全局不同的设置（如更短的 debounce、不同的提交信息模式）时，在该仓库根放一个即可，它会覆盖全局配置的对应项（配置跟随仓库走，可进 git 版本管理）。
+- 单仓库用户也可以完全零配置——内置默认值（`auto_commit`、debounce 60s、max_wait 300s、timestamp 提交信息）开箱即用。
+
 ### 4.2 配置项全表
 
 | 配置项 | 默认 | 说明 |
@@ -196,7 +207,8 @@ gns help                # 命令帮助
 ### 4.3 完整示例
 
 ```toml
-# ./.notes-sync.toml（仓库级）或 ~/.config/git-notes-sync/config.toml（全局）
+# ~/.config/git-notes-sync/config.toml（推荐，全局）
+# 或 ./.notes-sync.toml（仓库级覆盖，一般不需要）
 
 auto_commit = true
 commit_debounce = 60

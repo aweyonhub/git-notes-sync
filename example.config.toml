@@ -1,7 +1,9 @@
-# git-notes-sync — repository-level config.
-# Place this file as ./.notes-sync.toml in a notes repo, or merge it into
-# the global config at ~/.config/git-notes-sync/config.toml (repo config
-# overrides global; every field below is optional).
+# git-notes-sync 配置示例。
+# 推荐：放入全局配置 ~/.config/git-notes-sync/config.toml
+#       （Windows: %APPDATA%\git-notes-sync\config.toml），
+#       配合 `gns repos add` 维护多仓库，无需在每个项目中放置配置。
+# 可选：仓库根 ./.notes-sync.toml 作为单仓库覆盖（一般没必要）。
+# 每个字段均可省略（使用内置默认值）。
 
 # ---- auto commit -----------------------------------------------------
 auto_commit = true            # commit worktree changes before syncing
