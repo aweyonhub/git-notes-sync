@@ -234,11 +234,13 @@ ai_fallback = "timestamp"
 ### 4.7 命令行接口（CLI） · 交互层
 
 ```bash
-gns sync         # 同步已有 commit（核心命令）
+gns sync         # 同步当前目录仓库（可带 repo 名字/路径，如 gns sync notes）
+gns sync-all     # 同步配置 repos 列表中的全部仓库
 gns commit       # 提交当前修改
 gns commit-ai    # AI 生成 message 后提交
 gns status       # 显示工作区、远端及待处理冲突
 gns resolve      # 处理已持久化的 conflict markers
+gns repos        # 维护多仓库列表：list | add <path> [-name n] | del <name|path>
 gns daemon       # 启动轻量 daemon（可选，Windows 首选）
 ```
 
@@ -314,7 +316,7 @@ npm install -g github:user/git-notes-sync
 |---|------|------|
 | 1 | 命令名 | Go 二进制 `gns`；npm bin 注册 `gns`（主）+ `notes-sync`（别名），文档示例按 `gns ...` 使用（2026-08-13 定） |
 | 2 | 配置文件位置 | 仓库根 `.notes-sync.toml` + 全局 `~/.config/git-notes-sync/config.toml`（Windows 为 `%APPDATA%`，经 `os.UserConfigDir()`）；仓库级覆盖全局；另有 `-c` 显式指定 |
-| 3 | 多仓库 | `gns sync` 默认当前目录；daemon 遍历全局配置 `repos = [...]`，为空则当前目录 |
+| 3 | 多仓库 | `gns sync` 默认当前目录（支持按配置 repo 名字/路径定位）；daemon / `gns sync-all` 遍历配置 `repos` 列表；`gns repos list\|add\|del` 维护名单；`repos` 支持 `repos = [...]` 简单数组与 `[[repos]] name+path` 命名表两种写法；为空则当前目录 |
 | 4 | debounce / max_wait 计时 | cron 无状态运行无法记住"首次发现"时间，因此在 `.git/git-notes-sync.state` 记录 first_seen：`now - mtime < debounce` 推迟；`now - first_seen >= max_wait` 强制提交（即使文件仍在编辑）。删除文件不参与 debounce |
 | 5 | auto_commit=false 且工作区脏 | merge 由 git 原生拒绝覆盖本地修改；跳过该仓库并提示，不破坏工作区 |
 | 6 | 二进制冲突 | 新增 `binary_strategy = "ours" \| "abort"`：ours 保留本地副本（checkout --ours）并继续；abort 中止 merge |

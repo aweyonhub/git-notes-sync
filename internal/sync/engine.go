@@ -57,7 +57,7 @@ func Sync(repo string, cfg *config.Config, logf func(string, ...any)) *Report {
 	defer unlock()
 
 	if inProg, err := g.MergeInProgress(); err == nil && inProg != "" {
-		rep.Err = fmt.Errorf("git is in %s state; finish it manually first (or run `notes resolve`)", inProg)
+		rep.Err = fmt.Errorf("git is in %s state; finish it manually first (or run `gns resolve`)", inProg)
 		return rep
 	}
 
@@ -121,7 +121,7 @@ func mergeUpstream(g *git.Runner, remote, branch string, cfg *config.Config, rep
 		if uerr == nil && len(unmerged) > 0 {
 			return handleConflicts(g, unmerged, cfg, rep)
 		}
-		return fmt.Errorf("merge %s/%s failed: %w (uncommitted local changes in the way? wait for commit or use `notes commit`)", remote, branch, err)
+		return fmt.Errorf("merge %s/%s failed: %w (uncommitted local changes in the way? wait for commit or use `gns commit`)", remote, branch, err)
 	}
 }
 

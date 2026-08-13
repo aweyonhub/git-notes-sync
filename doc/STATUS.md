@@ -83,6 +83,7 @@
 | P1 | Windows 实机验证 | daemon 行为、credential helper / SSH 环境继承、autocrlf 场景 |
 | P2 | `gns resolve` 交互式模式 | 逐个文件选择 ours/theirs/AI（当前为全局 flag 一次性处理） |
 | P2 | cron 示例文档完善 | README 已有 `*/5 * * * *` 示例，可补充 launchd plist 模板 |
+| P2 | `gns install` / `gns uninstall` 注册/管理系统服务 | 一键注册 daemon 开机自启并反注册：Linux systemd user unit（`~/.config/systemd/user/gns.service`）；macOS launchd LaunchAgent（`~/Library/LaunchAgents/com.git-notes-sync.plist`）；Windows 任务计划程序（`schtasks /Create`，可选真服务需 nssm / x/sys/windows/svc）；`uninstall` 删除对应注册并停止 |
 | P3 | 可选增强 | `gns init` 生成示例配置 |
 | P3 | 可选：GoReleaser 替代手写 Actions | 多平台发布更成熟（checksums/changelog/Homebrew 等）；当前 5 平台手写够用，仅建议补充 checksums 生成 |
 | P3 | 可选：shell 补全 | `gns completion bash\|zsh\|fish`，npm 生态用户偏好 |

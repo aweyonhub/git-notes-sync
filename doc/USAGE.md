@@ -207,7 +207,18 @@ ai_fallback = "timestamp"
 binary_strategy = "ours"
 sync_interval = 60
 retry_attempts = 3
-repos = ["~/notes", "~/wiki"]
+
+# 多仓库列表（daemon / gns sync-all / gns sync <name> 使用）
+# 写法一：简单数组（显示名 = 路径）
+# repos = ["~/notes", "~/work/wiki"]
+# 写法二：命名表（可用 gns repos add/del 维护；推荐，便于按名字同步）
+[[repos]]
+name = "notes"
+path = "~/notes"
+
+[[repos]]
+name = "wiki"
+path = "~/work/wiki"
 
 [conflict]
 strategy = "preserve"
@@ -218,6 +229,7 @@ type = "api"
 base_url = "https://api.example.com/v1"
 model = "model-name"
 api_key_env = "NOTES_AI_API_KEY"
+agent_file = "AGENTS.md"    # 仓库级指令文件，随 diff 发给 AI（默认，不存在则忽略）
 timeout = 60
 max_diff_bytes = 51200
 ```
@@ -230,8 +242,16 @@ max_diff_bytes = 51200
 
 ```bash
 crontab -e
-# 每 5 分钟同步一次（注意：cron 环境变量很少，需保证 git 可达、凭据可用）
-*/5 * * * * cd /home/me/notes && /usr/bin/env gns sync >> /tmp/gns-sync.log 2>&1
+# 注意：cron 的 PATH 只有 /usr/bin:/bin，且环境变量极少。
+# 方案一（最稳）：写 gns 的绝对路径（npm 全局 bin 一般 /usr/local/bin）
+# 单仓库：每 5 分钟同步（cd 到仓库目录）
+*/5 * * * * cd /home/me/notes && /usr/local/bin/gns sync >> /tmp/gns-sync.log 2>&1
+# 多仓库：每 5 分钟同步配置中所有 repos（sync-all 无需 cd）
+*/5 * * * * /usr/local/bin/gns sync-all >> /tmp/gns-sync.log 2>&1
+
+# 方案二：先显式设置 PATH 再直接调命令（可含 SSH_AUTH_SOCK 等）
+PATH=/usr/local/bin:/usr/bin:/bin:/home/me/.npm-global/bin
+*/5 * * * * gns sync-all >> /tmp/gns-sync.log 2>&1
 ```
 
 ### macOS — launchd
@@ -242,10 +262,11 @@ crontab -e
 <key>StartInterval</key><integer>300</integer>
 <key>ProgramArguments</key>
 <array>
-  <string>/usr/local/bin/notes</string>
-  <string>sync</string>
+  <string>/usr/local/bin/gns</string>
+  <!-- 单仓库：sync（配合 WorkingDirectory）；多仓库：sync-all（忽略目录） -->
+  <string>sync-all</string>
 </array>
-<key>WorkingDirectory</key><string>/Users/me/notes</string>
+<key>WorkingDirectory</key><string>/Users/me</string>
 ```
 
 ```bash
@@ -265,7 +286,7 @@ gns daemon
 **方式二：任务计划程序**
 
 - 触发器：每 5 分钟 / 登录时
-- 操作：`notes.exe sync`（工作目录设为笔记仓库）
+- 操作：`gns.exe sync-all`（同步配置中所有 repos，无需设工作目录）；单仓库可用 `gns.exe sync` 并设置工作目录
 - ⚠️ 注意：任务计划程序的环境变量受限，SSH agent / credential helper 需保证可用
 
 ### daemon / cron 环境注意事项
@@ -278,7 +299,7 @@ gns daemon
 
 ### 6.1 提交信息模式说明
 
-`commit_message` 三种模式（示例见 §3 `notes commit` 章节）：
+`commit_message` 三种模式（示例见 §3 `gns commit` 章节）：
 
 - **`timestamp`**（默认）：时间戳 + diff 摘要，如：
 
@@ -290,7 +311,17 @@ gns daemon
    - docroot/20-collect/draft.md (+7)
   ```
 
-- **`static`**：固定文本（`commit_static_message`，默认 `"notes: auto sync"`）+ 同样的 diff 摘要，适合希望提交信息稳定可搜索的场景（如同步插件过滤）
+- **`static`**：固定文本（`commit_static_message`，默认 `"notes: auto sync"`）+ 同样的 diff 摘要，适合希望提交信息稳定可搜索的场景（如同步插件过滤）：
+
+  ```
+  notes: auto sync
+
+   files: 3 changed, +42, -8
+   - docroot/10-note/mac/aerospace.md (+20, -3)
+   - docroot/20-collect/draft.md (+7)
+  ```
+
+> 三种模式的共同点是 **diff 摘要**：` files: N changed, +X, -Y` + 每文件行数增减（前 20 个文件，超出省略），来源 `git diff --cached --numstat`。
 - **`ai`**：AI 根据 diff 生成语义化信息；失败自动降级到 `ai_fallback`
 
 ### 6.2 API 方式（OpenAI 兼容）
@@ -303,7 +334,7 @@ model = "gpt-4o-mini"
 api_key_env = "NOTES_AI_API_KEY"          # export NOTES_AI_API_KEY=sk-...
 ```
 
-### 6.2 Command 方式（任意 CLI）
+### 6.3 Command 方式（任意 CLI）
 
 ```toml
 [ai]
@@ -313,11 +344,11 @@ command = "codex exec --format openai ..."   # 或 ollama run qwen2.5 / 自定�
 
 约定：**stdin = git diff（或待解决冲突文件内容），stdout = 提交信息（或解决结果）**。退出码非 0 或超时视为失败。
 
-### 6.3 Agent 指令文件
+### 6.4 Agent 指令文件
 
 `[ai] agent_file`（默认 `AGENTS.md`）指向仓库根的一个指令文件，内容会随 diff 一起作为 system prompt 的一部分发给 AI——适合固定提交风格、语言、排除规则等（例如要求提交信息用中文、标注 breaking change）。文件不存在时静默忽略，不影响调用。
 
-### 6.4 降级机制（重要）
+### 6.5 降级机制（重要）
 
 AI 是**增强而非依赖**：API 不可用、网络错误、quota 用尽、CLI 未安装、返回格式异常、超时——任何失败自动按 `ai_fallback` 降级（默认 timestamp 摘要），**同步链路不受任何影响**。
 

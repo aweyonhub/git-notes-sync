@@ -55,7 +55,9 @@ gns version
 auto_commit = true            # 是否自动提交工作区修改
 commit_debounce = 60          # 最近修改距今不足 N 秒则推迟提交
 commit_max_wait = 300         # 修改待处理超过 N 秒则强制提交（兜底）
-commit_message = "timestamp"  # timestamp | static | ai
+commit_message = "timestamp"  # timestamp | static | ai（均附带 diff 摘要：
+                              #   文件列表 + 行数增减；static 首行为固定文本
+                              #   commit_static_message，ai 失败降级 ai_fallback）
 binary_strategy = "ours"      # 二进制冲突：保留本地副本 | abort
 
 [conflict]
@@ -67,6 +69,7 @@ type = "api"                  # api | command
 base_url = "https://api.example.com/v1"
 model = "model-name"
 api_key_env = "NOTES_AI_API_KEY"
+agent_file = "AGENTS.md"      # 仓库级 agent 指令文件，随 diff 发给 AI（默认）
 # type = "command"
 # command = "codex exec ..."  # stdin = diff，stdout = commit message
 ```

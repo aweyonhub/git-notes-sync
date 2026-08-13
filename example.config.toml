@@ -9,8 +9,23 @@ commit_debounce = 60          # skip commit while the newest change is younger
                               # than N seconds (avoids interrupting edits)
 commit_max_wait = 300         # force commit N seconds after a change was first
                               # seen, even if the file keeps changing
+
+# 提交信息模式（三种模式均附带 git diff 摘要：文件列表 + 行数增减）：
+#   timestamp — 首行时间戳，可追溯，默认：
+#       notes: 2026-08-13 11:30
+#
+#        files: 3 changed, +42, -8
+#        - docroot/10-note/mac/aerospace.md (+20, -3)
+#        - docroot/20-collect/draft.md (+7)
+#   static    — 首行固定文本（commit_static_message），适合脚本过滤/稳定搜索：
+#       notes: auto sync
+#
+#        files: 3 changed, +42, -8
+#        - docroot/10-note/mac/aerospace.md (+20, -3)
+#   ai        — AI 根据 diff 生成语义化信息（需配置 [ai]），失败自动降级
+#               ai_fallback
 commit_message = "timestamp"  # timestamp | static | ai
-commit_static_message = "notes: auto sync"   # used by static mode
+commit_static_message = "notes: auto sync"   # 仅 static 模式生效
 
 # ---- conflicts --------------------------------------------------------
 binary_strategy = "ours"      # ours (keep local copy) | abort (stop sync)
