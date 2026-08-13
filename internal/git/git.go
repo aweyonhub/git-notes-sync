@@ -1,0 +1,326 @@
+// Package git wraps the system git binary. The tool deliberately does not
+// re-implement git (see spec §1.3): all operations shell out to `git`.
+package git
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+// Runner executes git commands inside a working directory.
+type Runner struct {
+	Dir string
+	Env []string
+}
+
+func NewRunner(dir string) *Runner { return &Runner{Dir: dir} }
+
+// CmdError carries the failing command and git's stderr.
+type CmdError struct {
+	Args   []string
+	Stderr string
+	Code   int
+	Err    error
+}
+
+func (e *CmdError) Error() string {
+	msg := strings.TrimSpace(e.Stderr)
+	if msg == "" {
+		msg = e.Err.Error()
+	}
+	return fmt.Sprintf("git %s: %s", strings.Join(e.Args, " "), msg)
+}
+
+func (e *CmdError) Unwrap() error { return e.Err }
+
+func (r *Runner) run(args ...string) (string, string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = r.Dir
+	if len(r.Env) > 0 {
+		cmd.Env = append(os.Environ(), r.Env...)
+	}
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	return out.String(), errb.String(), err
+}
+
+func cmdErr(args []string, stderr string, err error) error {
+	code := -1
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	}
+	return &CmdError{Args: args, Stderr: stderr, Code: code, Err: err}
+}
+
+// Out runs git and returns trimmed stdout; non-zero exit yields *CmdError.
+func (r *Runner) Out(args ...string) (string, error) {
+	out, stderr, err := r.run(args...)
+	if err != nil {
+		return "", cmdErr(args, stderr, err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// OutErr runs git and returns trimmed stdout/stderr even on failure.
+func (r *Runner) OutErr(args ...string) (string, string, error) {
+	out, stderr, err := r.run(args...)
+	if err != nil {
+		return strings.TrimSpace(out), strings.TrimSpace(stderr), cmdErr(args, stderr, err)
+	}
+	return strings.TrimSpace(out), strings.TrimSpace(stderr), nil
+}
+
+// IsRepo reports whether Dir is inside a git work tree.
+func (r *Runner) IsRepo() bool {
+	_, err := r.Out("rev-parse", "--git-dir")
+	return err == nil
+}
+
+func (r *Runner) TopLevel() (string, error) {
+	s, err := r.Out("rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	if abs, aerr := filepath.Abs(s); aerr == nil {
+		s = abs
+	}
+	return s, nil
+}
+
+func (r *Runner) GitDir() (string, error) {
+	s, err := r.Out("rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", err
+	}
+	return s, nil
+}
+
+func (r *Runner) CurrentBranch() string {
+	s, err := r.Out("branch", "--show-current")
+	if err != nil || s == "" {
+		return ""
+	}
+	return s
+}
+
+// Upstream parses @{u} into (remote, branch).
+func (r *Runner) Upstream() (remote, branch string, ok bool) {
+	s, err := r.Out("rev-parse", "--abbrev-ref", "@{u}")
+	if err != nil {
+		return "", "", false
+	}
+	i := strings.IndexByte(s, '/')
+	if i < 0 {
+		return "", "", false
+	}
+	return s[:i], s[i+1:], true
+}
+
+// Count returns the number of commits in revA..revB.
+func (r *Runner) Count(revA, revB string) (int, error) {
+	s, err := r.Out("rev-list", "--count", revA+".."+revB)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(s)
+}
+
+func (r *Runner) Fetch(remote string) error {
+	_, err := r.Out("fetch", "--prune", remote)
+	return err
+}
+
+func (r *Runner) Merge(ref string) error {
+	_, err := r.Out("merge", "--no-edit", ref)
+	return err
+}
+
+func (r *Runner) MergeAbort() error {
+	_, err := r.Out("merge", "--abort")
+	return err
+}
+
+// MergeInProgress reports whether git is mid-merge/rebase/cherry-pick
+// (returns the marker name, or "" when idle).
+func (r *Runner) MergeInProgress() (string, error) {
+	gd, err := r.GitDir()
+	if err != nil {
+		return "", err
+	}
+	markers := []string{
+		filepath.Join(gd, "MERGE_HEAD"),
+		filepath.Join(gd, "CHERRY_PICK_HEAD"),
+		filepath.Join(gd, "REVERT_HEAD"),
+		filepath.Join(gd, "rebase-merge"),
+		filepath.Join(gd, "rebase-apply"),
+	}
+	for _, m := range markers {
+		if _, err := os.Stat(m); err == nil {
+			return filepath.Base(m), nil
+		}
+	}
+	return "", nil
+}
+
+// Entry is one row of `git status --porcelain -z`.
+type Entry struct {
+	Status string // "XY" or "??"
+	Path   string
+}
+
+func (r *Runner) Status() ([]Entry, error) {
+	out, _, err := r.run("status", "--porcelain", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var entries []Entry
+	fields := strings.Split(out, "\x00")
+	for i := 0; i < len(fields); i++ {
+		f := fields[i]
+		if f == "" {
+			continue
+		}
+		if len(f) < 4 {
+			continue
+		}
+		xy := f[:2]
+		path := f[3:]
+		if (xy[0] == 'R' || xy[0] == 'C' || xy[1] == 'R' || xy[1] == 'C') && i+1 < len(fields) {
+			// rename/copy: first field is the source, second the destination
+			i++
+			path = fields[i]
+		}
+		entries = append(entries, Entry{Status: xy, Path: path})
+	}
+	return entries, nil
+}
+
+// Unmerged returns paths currently in conflict (stages 1/2/3).
+func (r *Runner) Unmerged() ([]string, error) {
+	out, err := r.Out("ls-files", "-u")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var paths []string
+	for _, ln := range strings.Split(out, "\n") {
+		tab := strings.IndexByte(ln, '\t')
+		if tab < 0 {
+			continue
+		}
+		p := ln[tab+1:]
+		if !seen[p] {
+			seen[p] = true
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+// Numstat is one row of `git diff --cached --numstat`.
+type Numstat struct {
+	Path    string
+	Added   int
+	Deleted int
+	Binary  bool
+}
+
+func (r *Runner) CachedNumstat() ([]Numstat, error) {
+	out, err := r.Out("diff", "--cached", "--numstat")
+	if err != nil {
+		return nil, err
+	}
+	var ns []Numstat
+	for _, ln := range strings.Split(out, "\n") {
+		parts := strings.SplitN(ln, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		n := Numstat{Path: parts[2]}
+		if parts[0] == "-" {
+			n.Binary = true
+		} else {
+			n.Added, _ = strconv.Atoi(parts[0])
+			n.Deleted, _ = strconv.Atoi(parts[1])
+		}
+		ns = append(ns, n)
+	}
+	return ns, nil
+}
+
+// CachedDiff returns `git diff --cached`, truncated to maxBytes.
+func (r *Runner) CachedDiff(maxBytes int) (string, error) {
+	out, _, err := r.run("diff", "--cached")
+	if err != nil {
+		return "", err
+	}
+	if maxBytes > 0 && len(out) > maxBytes {
+		out = out[:maxBytes] + "\n...[truncated]"
+	}
+	return out, nil
+}
+
+func (r *Runner) AddAll() error { _, err := r.Out("add", "-A"); return err }
+
+func (r *Runner) Add(paths ...string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"add", "--"}, paths...)
+	_, err := r.Out(args...)
+	return err
+}
+
+func (r *Runner) Commit(msg string) error {
+	_, err := r.Out("commit", "-m", msg)
+	return err
+}
+
+// CommitMerge finishes an in-progress merge (used after conflict staging).
+func (r *Runner) CommitMerge() error {
+	_, err := r.Out("commit", "--no-edit")
+	return err
+}
+
+// Push pushes the current branch to remote:refs/heads/branch.
+func (r *Runner) Push(remote, branch string) error {
+	_, err := r.Out("push", remote, "HEAD:refs/heads/"+branch)
+	return err
+}
+
+func (r *Runner) CheckoutOurs(path string) error {
+	_, err := r.Out("checkout", "--ours", "--", path)
+	return err
+}
+
+func (r *Runner) CheckoutTheirs(path string) error {
+	_, err := r.Out("checkout", "--theirs", "--", path)
+	return err
+}
+
+// MarkerFiles returns tracked files containing conflict markers
+// (`<<<<<<< ` / `>>>>>>> ` lines). Empty when none.
+func (r *Runner) MarkerFiles() ([]string, error) {
+	out, _, err := r.run("grep", "-l", "-e", "^<<<<<<< ", "-e", "^>>>>>>> ", "--", ":/")
+	if err != nil {
+		// git grep exits 1 when nothing matches
+		if ce, ok := err.(*exec.ExitError); ok && ce.ExitCode() == 1 {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var files []string
+	for _, ln := range strings.Split(out, "\n") {
+		if ln != "" {
+			files = append(files, ln)
+		}
+	}
+	return files, nil
+}

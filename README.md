@@ -1,0 +1,91 @@
+# git-notes-sync
+
+> 面向 Git 工作区的自动同步工具。以 Markdown / Obsidian 笔记为首要场景，核心能力保持通用。
+> 同步模型：`可选提交 → 保护工作区 → fetch → merge（非 rebase）→ 保留文本冲突 → merge commit → push`。
+
+Go 实现，调用系统 Git，不重新实现 Git。详见 [git-nodes-sync.md](./git-nodes-sync.md)（规格与实现决策）。
+
+## 安装
+
+### npm（推荐，免编译）
+
+```bash
+npm install -g github:git-notes-sync/git-notes-sync
+# 提供 notes / notes-sync 两个命令
+```
+
+安装时按平台从 GitHub Releases 下载对应二进制（`scripts/install.js` + 平台映射表）。
+
+### 手动构建
+
+```bash
+make build          # 本机二进制 ./notes-sync
+make cross          # 交叉编译全部平台到 dist/
+make test           # 集成测试（需要系统 git）
+```
+
+## 使用
+
+```bash
+notes sync          # 核心命令：commit → fetch → merge → push
+notes commit        # 立即提交当前修改（忽略 debounce）
+notes commit-ai     # AI 生成 message 后提交
+notes status        # 工作区 / 远端 / 冲突状态
+notes resolve       # 列出已持久化的冲突 markers
+notes resolve --ours | --theirs   # 保留单侧，去 markers，提交并推送
+notes resolve --ai                # AI 语义合并（需配置 [ai]）
+notes daemon        # 轻量 daemon（Windows 首选，timer 轮询多仓库）
+notes version
+```
+
+### 定时调度
+
+- **Linux / macOS**：cron 无状态触发，建议 `*/5 * * * * cd ~/notes && notes sync`（cron 环境需完整：SSH agent、credential helper、PATH/HOME）。
+- **Windows**：`notes daemon`（内置 timer，默认 60s），配合任务计划程序开机自启；daemon 继承启动它的 shell 环境变量。
+
+## 配置
+
+两层合并：全局 `~/.config/git-notes-sync/config.toml`（或 `%APPDATA%\git-notes-sync\config.toml`）→ 仓库 `.notes-sync.toml`。完整示例见 [example.config.toml](./example.config.toml)。
+
+```toml
+auto_commit = true            # 是否自动提交工作区修改
+commit_debounce = 60          # 最近修改距今不足 N 秒则推迟提交
+commit_max_wait = 300         # 修改待处理超过 N 秒则强制提交（兜底）
+commit_message = "timestamp"  # timestamp | static | ai
+binary_strategy = "ours"      # 二进制冲突：保留本地副本 | abort
+
+[conflict]
+strategy = "preserve"         # 文本冲突保留 markers 并继续同步 | abort
+text_extensions = [".md", ".txt", ".yaml", ".yml", ".toml"]
+
+[ai]                          # 可选；任何故障自动降级，不阻塞同步
+type = "api"                  # api | command
+base_url = "https://api.example.com/v1"
+model = "model-name"
+api_key_env = "NOTES_AI_API_KEY"
+# type = "command"
+# command = "codex exec ..."  # stdin = diff，stdout = commit message
+```
+
+## 行为要点
+
+- **提交时机**：debounce 防打断编辑；`max_wait` 基于 `.git/git-notes-sync.state` 记录"首次发现修改"时间，跨 cron 无状态运行仍可兜底强制提交。
+- **提交信息**：`timestamp`/`static` 模式附带 diff 摘要（文件列表 + 行数增减）；`ai` 模式由 AI 生成（`git diff --cached` 截断到 `max_diff_bytes`），失败 fallback 到 `ai_fallback`。
+- **冲突不阻塞**：文本冲突保留双方内容与 markers → `git add` → merge commit → push；冲突成为可延迟解决的持久状态，`notes resolve` 事后处理。二进制冲突按 `binary_strategy` 保留本地副本或中止。
+- **可靠性**：fetch/push 指数退避重试（`retry_attempts`）；`.git/git-notes-sync.lock` 防并发（10 分钟过期）；merge/rebase 进行中不叠加操作；push 被拒（远端移动）自动重 fetch + 重 merge，最多 3 轮。
+- **保护未提交内容**：merge 由 git 原生拒绝覆盖本地修改；此时跳过该仓库并提示。
+
+## 开发
+
+```text
+internal/
+  config/   配置加载与合并（默认值 ← 全局 ← -c ← 仓库级）
+  git/      系统 git 封装
+  commit/   提交时机（debounce/max_wait/state）与消息生成
+  ai/       OpenAI-compatible API / CLI 双后端，统一降级
+  sync/     同步引擎、冲突处理、resolve、status、marker 解析
+  daemon/   轻量 timer daemon（配置变更自动重载）
+  cli/      命令分发
+```
+
+发布：打 tag `v0.1.0` → GitHub Actions 交叉编译并发布 Release → npm 壳 `postinstall` 下载。

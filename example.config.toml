@@ -1,0 +1,41 @@
+# git-notes-sync — repository-level config.
+# Place this file as ./.notes-sync.toml in a notes repo, or merge it into
+# the global config at ~/.config/git-notes-sync/config.toml (repo config
+# overrides global; every field below is optional).
+
+# ---- auto commit -----------------------------------------------------
+auto_commit = true            # commit worktree changes before syncing
+commit_debounce = 60          # skip commit while the newest change is younger
+                              # than N seconds (avoids interrupting edits)
+commit_max_wait = 300         # force commit N seconds after a change was first
+                              # seen, even if the file keeps changing
+commit_message = "timestamp"  # timestamp | static | ai
+commit_static_message = "notes: auto sync"   # used by static mode
+
+# ---- conflicts --------------------------------------------------------
+binary_strategy = "ours"      # ours (keep local copy) | abort (stop sync)
+
+[conflict]
+strategy = "preserve"         # preserve (keep markers + merge commit) | abort
+text_extensions = [".md", ".markdown", ".txt", ".yaml", ".yml", ".toml",
+                   ".json", ".org", ".rst", ".adoc", ".csv"]
+
+# ---- ai (optional; failures always fall back, never block sync) --------
+ai_fallback = "timestamp"     # timestamp | static
+
+[ai]
+# api mode: any OpenAI-compatible endpoint
+type = "api"
+base_url = "https://api.example.com/v1"
+model = "model-name"
+api_key_env = "NOTES_AI_API_KEY"   # key read from this environment variable
+# command mode: any CLI, stdin = diff / conflicted file, stdout = result
+# type = "command"
+# command = "codex exec --format openai ..."
+timeout = 60                  # seconds
+max_diff_bytes = 51200        # cap the diff sent to the AI
+
+# ---- daemon (global config only) ---------------------------------------
+sync_interval = 60            # seconds between ticks
+retry_attempts = 3            # fetch/push retries (exponential backoff)
+repos = ["~/notes", "~/work/wiki"]   # repos the daemon loops over; empty = cwd

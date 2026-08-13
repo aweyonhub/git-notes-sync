@@ -1,0 +1,9 @@
+# binaries
+/notes-sync
+/dist
+
+# npm package shell (binary downloaded at install time)
+/npm/bin/notes-sync-*
+
+# test artifacts
+*.test
