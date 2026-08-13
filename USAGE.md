@@ -1,0 +1,342 @@
+# git-notes-sync 使用说明
+
+> 面向 Git 工作区的自动同步工具（Markdown / Obsidian 笔记首选场景，任意文本仓库通用）。
+> 核心：一条命令完成 `提交 → fetch → merge → push`，冲突不阻断同步。
+
+---
+
+## 1. 安装
+
+### 方式一：npm（推荐，无需 Go 环境）
+
+```bash
+npm install -g github:git-notes-sync/git-notes-sync
+```
+
+安装过程自动按平台从 GitHub Releases 下载对应二进制。安装后提供两个等价命令：
+
+```bash
+notes --version        # 或 notes-sync --version
+```
+
+### 方式二：手动构建（需要 Go 1.22+）
+
+```bash
+make build            # 生成 ./notes-sync
+make cross            # 交叉编译全部 5 平台到 dist/
+```
+
+### 前置要求
+
+- **系统 Git**（`git --version` 可运行）——本工具不内置 Git，全部调用系统 Git
+- 仓库已配置远端与上游：`git remote add origin <url>` + `git push -u origin main`
+
+---
+
+## 2. 快速上手
+
+```bash
+cd ~/notes                          # 进入笔记仓库
+
+notes status                        # ① 查看仓库状态（分支/落后领先/冲突）
+notes sync                          # ② 手动同步一次：commit → fetch → merge → push
+
+# ③（可选）仓库级配置，控制提交时机等
+cp example.config.toml .notes-sync.toml
+
+# ④（可选）配置定时任务，见「5. 定时调度」
+```
+
+首次运行建议先在终端手动执行 `notes sync`，确认输出正常后再配置定时任务。
+
+---
+
+## 3. 命令详解
+
+### `notes sync` — 核心同步命令
+
+执行完整同步流程：
+
+```
+可选自动提交（受 debounce / max_wait 控制）
+  ↓
+保护未提交工作区（绝不覆盖用户修改）
+  ↓
+fetch（网络失败自动重试 3 次，指数退避）
+  ↓
+merge 远端（非 rebase，保留双向历史）
+  ↓
+文本冲突 → 保留 markers → merge commit（不阻断）
+  ↓
+push（远端有更新时自动重新 fetch + merge，最多 3 轮）
+```
+
+```bash
+notes sync                # 同步当前目录仓库
+notes sync -repo ~/notes  # 指定仓库
+notes sync -c my.toml     # 指定配置文件
+```
+
+### `notes commit` — 立即提交
+
+```bash
+notes commit              # 忽略 debounce，立即提交当前所有修改
+notes commit -message "自定义信息"
+notes commit -force       # 显式强制（默认 commit 即忽略时机）
+```
+
+### `notes commit-ai` — AI 提交
+
+```bash
+notes commit-ai           # AI 根据 diff 生成提交信息；AI 不可用时自动降级
+```
+
+### `notes status` — 状态查看
+
+```bash
+notes status
+```
+
+输出示例：
+
+```
+repo: /home/me/notes
+branch: main (tracking origin/main)
+remote: ahead 2 | behind 1 (vs origin/main)
+worktree: 3 change(s)
+  M docroot/10-note/mac/aerospace.md
+  ?? scratch/idea.md
+conflicts: 1 file(s)
+  docroot/20-collect/draft.md (2 block(s))
+```
+
+### `notes resolve` — 处理持久化的冲突
+
+```bash
+notes resolve                      # ① 列出含冲突 markers 的文件（默认）
+notes resolve --ours               # ② 全部保留本地版本，去 markers，提交并推送
+notes resolve --theirs             # ③ 全部保留远端版本，去 markers，提交并推送
+notes resolve --ai                 # ④ AI 逐文件语义合并（需配置 [ai]）
+```
+
+> `--ours` / `--theirs` 是一次性处理**所有**冲突文件；AI 失败的单个文件会保留 markers 并跳过，不丢数据。
+
+### `notes daemon` — 轻量常驻（Windows 首选）
+
+```bash
+notes daemon              # 按 sync_interval（默认 60s）定时同步所有 repos
+notes daemon --once       # 只跑一轮（可用于测试）
+notes daemon -c my.toml   # 指定全局配置
+```
+
+daemon 只做两件事：内部 timer 周期触发同步、缓存配置（配置变更自动热重载）。不做 watcher、无状态持久化。
+
+### `notes version` / `notes help`
+
+```bash
+notes version             # 版本号
+notes help                # 命令帮助
+```
+
+---
+
+## 4. 配置参考
+
+### 4.1 配置文件位置与合并规则
+
+| 优先级 | 位置 | 说明 |
+|--------|------|------|
+| 低 | 内置默认值 | 见下表"默认"列 |
+| 中 | 全局配置 | Linux/macOS：`~/.config/git-notes-sync/config.toml`；Windows：`%APPDATA%\git-notes-sync\config.toml` |
+| 高 | 仓库配置 | 仓库根目录 `.notes-sync.toml`（随笔记仓库走，可进 git 版本管理） |
+
+规则：后加载的覆盖先加载的（仓库 > 全局 > 默认）。也可用 `-c 文件` 显式指定并置于仓库配置之前加载。
+
+### 4.2 配置项全表
+
+| 配置项 | 默认 | 说明 |
+|--------|------|------|
+| `auto_commit` | `true` | 同步前是否自动提交工作区修改 |
+| `commit_debounce` | `60` | 最近一次修改距今不足 N 秒则推迟提交（避免打断编辑） |
+| `commit_max_wait` | `300` | 修改待处理超过 N 秒强制提交（防止长期未落盘） |
+| `commit_message` | `"timestamp"` | `timestamp`（时间戳+diff 摘要）\| `static`（固定文本+摘要）\| `ai`（AI 生成） |
+| `commit_static_message` | `"notes: auto sync"` | `static` 模式的固定文本 |
+| `ai_fallback` | `"timestamp"` | AI 失败时的降级：`timestamp` \| `static` |
+| `binary_strategy` | `"ours"` | 二进制冲突：`ours`（保留本地副本）\| `abort`（中止同步） |
+| `sync_interval` | `60` | daemon 轮询间隔（秒，最小 5） |
+| `retry_attempts` | `3` | fetch/push 网络失败重试次数（2s/4s/8s 退避） |
+| `repos` | `[]` | daemon 遍历的仓库列表；为空则当前目录 |
+| `[conflict] strategy` | `"preserve"` | 文本冲突：`preserve`（保留 markers 继续同步）\| `abort`（中止） |
+| `[conflict] text_extensions` | 见下 | 视为文本的扩展名列表，默认 `.md .markdown .txt .yaml .yml .toml .json .org .rst .adoc .csv` |
+| `[ai] type` | 空 | `api`（OpenAI 兼容接口）\| `command`（任意 CLI） |
+| `[ai] base_url` | 空 | API 地址，如 `https://api.openai.com/v1` |
+| `[ai] model` | 空 | 模型名 |
+| `[ai] api_key_env` | `"NOTES_AI_API_KEY"` | API Key 所在环境变量名 |
+| `[ai] command` | 空 | command 模式的 CLI 命令 |
+| `[ai] timeout` | `60` | AI 调用超时（秒） |
+| `[ai] max_diff_bytes` | `51200` | 发送给 AI 的 diff 截断上限 |
+
+### 4.3 完整示例
+
+```toml
+# ./.notes-sync.toml（仓库级）或 ~/.config/git-notes-sync/config.toml（全局）
+
+auto_commit = true
+commit_debounce = 60
+commit_max_wait = 300
+commit_message = "timestamp"        # timestamp | static | ai
+commit_static_message = "notes: auto sync"
+ai_fallback = "timestamp"
+binary_strategy = "ours"
+sync_interval = 60
+retry_attempts = 3
+repos = ["~/notes", "~/wiki"]
+
+[conflict]
+strategy = "preserve"
+text_extensions = [".md", ".txt", ".yaml", ".yml", ".toml"]
+
+[ai]
+type = "api"
+base_url = "https://api.example.com/v1"
+model = "model-name"
+api_key_env = "NOTES_AI_API_KEY"
+timeout = 60
+max_diff_bytes = 51200
+```
+
+---
+
+## 5. 定时调度
+
+### Linux — cron
+
+```bash
+crontab -e
+# 每 5 分钟同步一次（注意：cron 环境变量很少，需保证 git 可达、凭据可用）
+*/5 * * * * cd /home/me/notes && /usr/bin/env notes sync >> /tmp/notes-sync.log 2>&1
+```
+
+### macOS — launchd
+
+创建 `~/Library/LaunchAgents/com.git-notes-sync.plist`，核心配置：
+
+```xml
+<key>StartInterval</key><integer>300</integer>
+<key>ProgramArguments</key>
+<array>
+  <string>/usr/local/bin/notes</string>
+  <string>sync</string>
+</array>
+<key>WorkingDirectory</key><string>/Users/me/notes</string>
+```
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.git-notes-sync.plist
+```
+
+### Windows — daemon（首选）或任务计划程序
+
+**方式一：daemon**
+
+```bash
+notes daemon
+```
+
+启动后每 60s 自动同步所有 `repos`。开机自启：将 `notes daemon` 放入「启动」文件夹或任务计划程序。异常退出后重启即恢复，无状态恢复逻辑。
+
+**方式二：任务计划程序**
+
+- 触发器：每 5 分钟 / 登录时
+- 操作：`notes.exe sync`（工作目录设为笔记仓库）
+- ⚠️ 注意：任务计划程序的环境变量受限，SSH agent / credential helper 需保证可用
+
+### daemon / cron 环境注意事项
+
+终端里 `git push` 成功但定时任务失败，通常是环境变量问题。需确保：`SSH_AUTH_SOCK`（SSH 认证）、credential helper（HTTPS 凭据）、`PATH` / `HOME` 完整。
+
+---
+
+## 6. AI 集成（可选）
+
+### 6.1 API 方式（OpenAI 兼容）
+
+```toml
+[ai]
+type = "api"
+base_url = "https://api.openai.com/v1"   # 或任意兼容服务 / 本地 Ollama
+model = "gpt-4o-mini"
+api_key_env = "NOTES_AI_API_KEY"          # export NOTES_AI_API_KEY=sk-...
+```
+
+### 6.2 Command 方式（任意 CLI）
+
+```toml
+[ai]
+type = "command"
+command = "codex exec --format openai ..."   # 或 ollama run qwen2.5 / 自定义程序
+```
+
+约定：**stdin = git diff（或待解决冲突文件内容），stdout = 提交信息（或解决结果）**。退出码非 0 或超时视为失败。
+
+### 6.3 降级机制（重要）
+
+AI 是**增强而非依赖**：API 不可用、网络错误、quota 用尽、CLI 未安装、返回格式异常、超时——任何失败自动按 `ai_fallback` 降级（默认 timestamp 摘要），**同步链路不受任何影响**。
+
+---
+
+## 7. 冲突处理指南
+
+### 7.1 冲突如何发生
+
+两端同时修改同一文件的同一区域 → merge 产生冲突。本工具的处理哲学：**冲突不是同步失败，是可延迟解决的数据状态**。
+
+### 7.2 冲突后发生了什么
+
+1. 冲突文件保留双方内容与 markers（`<<<<<<<` / `=======` / `>>>>>>>`）
+2. 自动 `git add` + merge commit + push —— **同步继续，不中断**
+3. 冲突内容已提交到历史，随时可用 `notes resolve` 事后解决
+
+### 7.3 解决流程
+
+```bash
+notes status          # 查看冲突文件
+notes resolve         # 列出含 markers 的文件及块数
+# 人工/Agent 编辑后：
+notes commit           # 提交解决结果
+# 或一键处理：
+notes resolve --ours      # 全部保留本地版本
+notes resolve --theirs    # 全部保留远端版本
+notes resolve --ai        # AI 语义合并（建议人工复核）
+```
+
+### 7.4 二进制冲突
+
+二进制文件无法保留 markers，按 `binary_strategy` 处理：
+
+- `ours`（默认）：保留本地副本，继续同步（注意：远端版本被覆盖）
+- `abort`：中止 merge 并提示，需人工处理
+
+---
+
+## 8. 常见问题（FAQ）
+
+| 现象 | 原因与处理 |
+|------|-----------|
+| `merge origin/main failed: Your local changes ... would be overwritten` | `auto_commit=false` 且工作区有未提交修改与远端冲突。`notes commit` 或 stash 后重试 |
+| `push rejected (fetch first)` | 远端在你 fetch 后又更新。工具已自动重 fetch + 重 merge 重试（≤3 轮）；若仍失败说明远端持续移动，手动处理 |
+| `git is in MERGE_HEAD state` | 存在未完成的 merge/rebase（可能来自其他工具）。先手动完成或 `git merge --abort` |
+| `another sync is running (lock: ...)` | 上一次同步未正常结束。锁 10 分钟自动过期；也可删除 `.git/git-notes-sync.lock` |
+| AI 未生效 | 检查 `commit_message = "ai"`、`[ai] type` 已配置、`api_key_env` 指向的环境变量已导出 |
+| `commit` 报 "Please tell me who you are" | 未配置 git 身份：`git config --global user.name/email` |
+| 与 Obsidian Git 插件冲突？ | 不冲突。本工具在系统层操作 Git，不介入编辑器进程，可共存或互补 |
+| daemon 里 push 失败但终端成功 | 环境变量问题（SSH agent / credential helper / PATH），见「5. 环境注意事项」 |
+| 同步间隔多长合适 | 笔记场景 60s~5min 均可；文件多/仓库大时可调大 `sync_interval` 或 cron 间隔 |
+
+---
+
+## 9. 与开发相关
+
+- 规格文档：[git-nodes-sync.md](./git-nodes-sync.md)（含 §七 实现决策）
+- 开发状态：[STATUS.md](./STATUS.md)
+- 完整配置示例：[example.config.toml](./example.config.toml)

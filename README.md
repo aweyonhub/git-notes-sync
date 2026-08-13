@@ -5,6 +5,8 @@
 
 Go 实现，调用系统 Git，不重新实现 Git。详见 [git-nodes-sync.md](./git-nodes-sync.md)（规格与实现决策）。
 
+**📖 完整使用说明见 [USAGE.md](./USAGE.md)**（安装、命令、配置、定时调度、AI、冲突处理、FAQ）。
+
 ## 安装
 
 ### npm（推荐，免编译）
