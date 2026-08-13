@@ -3,9 +3,9 @@
 > 面向 Git 工作区的自动同步工具。以 Markdown / Obsidian 笔记为首要场景，核心能力保持通用。
 > 同步模型：`可选提交 → 保护工作区 → fetch → merge（非 rebase）→ 保留文本冲突 → merge commit → push`。
 
-Go 实现，调用系统 Git，不重新实现 Git。详见 [git-nodes-sync.md](./git-nodes-sync.md)（规格与实现决策）。
+Go 实现，调用系统 Git，不重新实现 Git。详见 [doc/git-notes-sync.md](./doc/git-notes-sync.md)（规格与实现决策）。
 
-**📖 完整使用说明见 [USAGE.md](./USAGE.md)**（安装、命令、配置、定时调度、AI、冲突处理、FAQ）。
+**📖 完整使用说明见 [doc/USAGE.md](./doc/USAGE.md)**（安装、命令、配置、定时调度、AI、冲突处理、FAQ）。
 
 ## 安装
 

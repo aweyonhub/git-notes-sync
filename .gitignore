@@ -1,9 +1,11 @@
 # binaries
-/notes-sync
+/gns
+/gns.exe
 /dist
 
-# npm package shell (binary downloaded at install time)
-/npm/bin/gns.exe
-
-# test artifacts
+# build artifacts
+/.build/
 *.test
+
+# npm package shell (binary downloaded at install time)
+/npm/bin/

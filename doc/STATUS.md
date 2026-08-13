@@ -1,6 +1,6 @@
 # git-notes-sync 开发状态
 
-> 更新：2026-08-13 · 基于 [git-nodes-sync.md](./git-nodes-sync.md) 规格开发（规格第七节已固化实现决策）
+> 更新：2026-08-13 · 基于 [git-notes-sync.md](../git-notes-sync.md) 规格开发（规格第七节已固化实现决策）
 
 ---
 
@@ -63,7 +63,7 @@
 - GitHub Actions：tag 触发交叉编译 5 平台 + 发布 Release
 - Makefile：build / test / vet / cross / clean
 - README.md + example.config.toml（全量配置注释）
-- 规格更新：git-nodes-sync.md 追加 §七 实现决策（19 项）
+- 规格更新：git-notes-sync.md 追加 §七 实现决策（19 项）
 
 ### 2.4 开发环境
 

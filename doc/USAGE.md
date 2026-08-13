@@ -337,6 +337,6 @@ gns resolve --ai        # AI 语义合并（建议人工复核）
 
 ## 9. 与开发相关
 
-- 规格文档：[git-nodes-sync.md](./git-nodes-sync.md)（含 §七 实现决策）
+- 规格文档：[git-notes-sync.md](../git-notes-sync.md)（含 §七 实现决策）
 - 开发状态：[STATUS.md](./STATUS.md)
-- 完整配置示例：[example.config.toml](./example.config.toml)
+- 完整配置示例：[example.config.toml](../example.config.toml)
