@@ -10,7 +10,7 @@
 ### 方式一：npm（推荐，无需 Go 环境）
 
 ```bash
-npm install -g github:git-notes-sync/git-notes-sync
+npm install -g github:aweyonhub/git-notes-sync
 ```
 
 安装过程自动按平台从 GitHub Releases 下载对应二进制到包内 `bin/gns.exe`，npm 的 `bin` 字段直接链接该原生二进制（无 JS 路由层）。安装后提供两个等价命令：

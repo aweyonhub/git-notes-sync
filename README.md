@@ -12,7 +12,7 @@ Go 实现，调用系统 Git，不重新实现 Git。详见 [doc/git-notes-sync.
 ### npm（推荐，免编译）
 
 ```bash
-npm install -g github:git-notes-sync/git-notes-sync
+npm install -g github:aweyonhub/git-notes-sync
 # 提供 gns（主命令）/ notes-sync（别名）
 ```
 

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/commit"
-	"github.com/git-notes-sync/git-notes-sync/internal/config"
-	"github.com/git-notes-sync/git-notes-sync/internal/git"
-	"github.com/git-notes-sync/git-notes-sync/internal/lock"
-	"github.com/git-notes-sync/git-notes-sync/internal/retry"
+	"github.com/aweyonhub/git-notes-sync/internal/commit"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/git"
+	"github.com/aweyonhub/git-notes-sync/internal/lock"
+	"github.com/aweyonhub/git-notes-sync/internal/retry"
 )
 
 // Report describes what a sync run did; Err is non-nil when the repo failed.

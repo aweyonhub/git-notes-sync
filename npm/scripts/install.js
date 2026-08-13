@@ -12,7 +12,7 @@ const path = require('path');
 const os = require('os');
 
 const VERSION = require('../package.json').version;
-const REPO = 'git-notes-sync/git-notes-sync'; // TODO: replace with your GitHub user/org
+const REPO = 'aweyonhub/git-notes-sync';
 
 // platform map: npm platform-arch → release asset name
 const MAP = {

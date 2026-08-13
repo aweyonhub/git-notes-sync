@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
 )
 
 // ---------- helpers: real git fixtures ----------

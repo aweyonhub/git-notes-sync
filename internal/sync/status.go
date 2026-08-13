@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/git"
+	"github.com/aweyonhub/git-notes-sync/internal/git"
 )
 
 // Status renders a human-readable report for `gns status`.

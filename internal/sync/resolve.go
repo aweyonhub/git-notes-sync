@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/ai"
-	"github.com/git-notes-sync/git-notes-sync/internal/config"
-	"github.com/git-notes-sync/git-notes-sync/internal/git"
-	"github.com/git-notes-sync/git-notes-sync/internal/retry"
+	"github.com/aweyonhub/git-notes-sync/internal/ai"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/git"
+	"github.com/aweyonhub/git-notes-sync/internal/retry"
 )
 
 // ConflictFile is a file holding persisted conflict markers.

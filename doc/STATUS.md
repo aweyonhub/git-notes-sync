@@ -29,7 +29,7 @@
 
 ### 1.3 待用户拍板（不阻塞开发，可随时改）
 
-- [ ] **GitHub 仓库地址**：npm 壳与 Actions 中 `git-notes-sync/git-notes-sync` 为占位符
+- [x] **GitHub 仓库**：https://github.com/aweyonhub/git-notes-sync（2026-08-13，占位符已替换）
 - [x] **命令名**：已确认使用 `gns`（2026-08-13）；npm 同时提供 `notes-sync` 别名
 - [ ] **国内网络**：是否追加 `GOPROXY=https://goproxy.cn,direct` 到 bashrc
 - [ ] **Windows 本机**：是否安装 Go（WSL 已装 `~/go-sdk/go`，仅开发需要）
@@ -76,7 +76,7 @@
 
 | 优先级 | 事项 | 说明 |
 |--------|------|------|
-| P0 | 创建 GitHub 仓库并替换占位符 | `npm/scripts/install.js`、`npm/package.json`、workflow 中的 `git-notes-sync/git-notes-sync` |
+| P0 | ~~创建 GitHub 仓库并替换占位符~~ | ✅ 已完成：https://github.com/aweyonhub/git-notes-sync（module path 同步更新） |
 | P0 | 打 tag 发布 v0.1.0 | 触发 Actions 交叉编译 → 生成 5 平台二进制 Release |
 | P0 | 验证 `npm install -g github:...` 全链路 | 在干净环境（无 Go）实测 postinstall 下载 + bin 可用 |
 | P1 | 真实 AI endpoint 冒烟 | 本地 Ollama 或任意 OpenAI-compatible 服务验证 `commit_message="ai"` 与 `resolve --ai` |

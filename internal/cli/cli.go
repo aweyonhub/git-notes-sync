@@ -9,13 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/ai"
-	"github.com/git-notes-sync/git-notes-sync/internal/commit"
-	"github.com/git-notes-sync/git-notes-sync/internal/config"
-	"github.com/git-notes-sync/git-notes-sync/internal/daemon"
-	reposPkg "github.com/git-notes-sync/git-notes-sync/internal/repos"
-	"github.com/git-notes-sync/git-notes-sync/internal/sync"
-	"github.com/git-notes-sync/git-notes-sync/internal/version"
+	"github.com/aweyonhub/git-notes-sync/internal/ai"
+	"github.com/aweyonhub/git-notes-sync/internal/commit"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/daemon"
+	reposPkg "github.com/aweyonhub/git-notes-sync/internal/repos"
+	"github.com/aweyonhub/git-notes-sync/internal/sync"
+	"github.com/aweyonhub/git-notes-sync/internal/version"
 )
 
 const usageText = `git-notes-sync %s — auto-sync for notes-style git workspaces

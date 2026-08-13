@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/ai"
-	"github.com/git-notes-sync/git-notes-sync/internal/config"
-	"github.com/git-notes-sync/git-notes-sync/internal/git"
+	"github.com/aweyonhub/git-notes-sync/internal/ai"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/git"
 )
 
 // state remembers when pending changes were first noticed so that max_wait

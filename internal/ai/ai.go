@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
 )
 
 // ErrNotConfigured is returned when ai.type is unset.

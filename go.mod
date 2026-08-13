@@ -1,4 +1,4 @@
-module github.com/git-notes-sync/git-notes-sync
+module github.com/aweyonhub/git-notes-sync
 
 go 1.22
 

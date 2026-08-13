@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/config"
-	"github.com/git-notes-sync/git-notes-sync/internal/git"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/git"
 )
 
 // handleConflicts turns a failed merge into a committed, pushable state:

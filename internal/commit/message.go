@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/git"
+	"github.com/aweyonhub/git-notes-sync/internal/git"
 )
 
 // maxFileLines caps per-file lines in the summary message.

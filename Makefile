@@ -2,7 +2,7 @@ BIN := gns
 VERSION ?= 0.1.0
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
-PKG := github.com/git-notes-sync/git-notes-sync
+PKG := github.com/aweyonhub/git-notes-sync
 LDFLAGS := -s -w \
 	-X $(PKG)/internal/version.Version=$(VERSION) \
 	-X $(PKG)/internal/version.Commit=$(GIT_COMMIT)

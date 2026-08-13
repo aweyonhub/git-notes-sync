@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
 )
 
 var (

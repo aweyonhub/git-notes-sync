@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/cli"
+	"github.com/aweyonhub/git-notes-sync/internal/cli"
 )
 
 func main() {

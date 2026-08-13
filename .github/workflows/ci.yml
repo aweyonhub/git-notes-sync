@@ -44,8 +44,8 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
             go build -trimpath -ldflags "-s -w \
-              -X github.com/git-notes-sync/git-notes-sync/internal/version.Version=${GITHUB_REF_NAME#v} \
-              -X github.com/git-notes-sync/git-notes-sync/internal/version.Commit=${GITHUB_SHA::7}" \
+              -X github.com/aweyonhub/git-notes-sync/internal/version.Version=${GITHUB_REF_NAME#v} \
+              -X github.com/aweyonhub/git-notes-sync/internal/version.Commit=${GITHUB_SHA::7}" \
             -o dist/gns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/gns
       - name: Upload release assets
         uses: softprops/action-gh-release@v2

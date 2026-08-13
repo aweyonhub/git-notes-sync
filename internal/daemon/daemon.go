@@ -9,8 +9,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/git-notes-sync/git-notes-sync/internal/config"
-	"github.com/git-notes-sync/git-notes-sync/internal/sync"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/sync"
 )
 
 // Run loops sync over all configured repos every sync_interval seconds.

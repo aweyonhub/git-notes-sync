@@ -258,7 +258,7 @@ gns daemon       # 启动轻量 daemon（可选，Windows 首选）
 **分发方式**：通过 npm 直接从 GitHub 仓库安装 Go 二进制，用户无需手动编译，也不依赖 npm 仓库发布。
 
 ```bash
-npm install -g github:user/git-notes-sync
+npm install -g github:aweyonhub/git-notes-sync
 ```
 
 **实现机制**：
