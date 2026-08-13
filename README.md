@@ -21,7 +21,7 @@ npm install -g github:git-notes-sync/git-notes-sync
 ### 手动构建
 
 ```bash
-make build          # 本机二进制 ./gns
+make build          # 本机二进制 ./gns（版本/commit 经 ldflags 注入）
 make cross          # 交叉编译全部平台到 dist/
 make test           # 集成测试（需要系统 git）
 ```

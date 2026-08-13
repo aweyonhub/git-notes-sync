@@ -1,0 +1,17 @@
+# 统一 LF 行尾（本项目与 CRLF 冲突处理强相关，源码必须 LF）
+* text=auto eol=lf
+
+# 明确标记文本文件
+*.go       text eol=lf
+*.md       text eol=lf
+*.toml     text eol=lf
+*.yml      text eol=lf
+*.json     text eol=lf
+*.js       text eol=lf
+Makefile   text eol=lf
+.gitignore text eol=lf
+
+# 二进制
+*.exe      binary
+*.png      binary
+*.jpg      binary

@@ -22,7 +22,7 @@ gns --version        # 或 notes-sync --version
 ### 方式二：手动构建（需要 Go 1.22+）
 
 ```bash
-make build            # 生成 ./notes-sync
+make build            # 生成 ./gns
 make cross            # 交叉编译全部 5 平台到 dist/
 ```
 

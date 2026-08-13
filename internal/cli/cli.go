@@ -67,7 +67,7 @@ func Run(args []string) error {
 	case "daemon":
 		return cmdDaemon(rest)
 	case "version", "--version", "-v":
-		fmt.Println("git-notes-sync " + version.Version)
+		fmt.Println("git-notes-sync " + version.Version + " (commit " + version.Commit + ")")
 		return nil
 	case "help", "--help", "-h":
 		fmt.Printf(usageText, version.Version)
