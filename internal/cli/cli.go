@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aweyonhub/git-notes-sync/internal/ai"
 	"github.com/aweyonhub/git-notes-sync/internal/commit"
 	"github.com/aweyonhub/git-notes-sync/internal/config"
 	"github.com/aweyonhub/git-notes-sync/internal/daemon"
 	reposPkg "github.com/aweyonhub/git-notes-sync/internal/repos"
+	"github.com/aweyonhub/git-notes-sync/internal/service"
 	"github.com/aweyonhub/git-notes-sync/internal/sync"
 	"github.com/aweyonhub/git-notes-sync/internal/version"
 )
@@ -29,6 +31,8 @@ usage:
   gns resolve [flags]     list or resolve persisted conflict markers
   gns repos <cmd>         manage the repo list: list | add | del
   gns config <cmd>        inspect / edit config: list | get | set | unset
+  gns install [flags]     install launchd LaunchAgent (macOS)
+  gns uninstall [flags]   remove launchd LaunchAgent (macOS)
   gns daemon [flags]      run the lightweight timer daemon
   gns version
 
@@ -66,6 +70,17 @@ commit flags:
 
 daemon flags:
   -once        run a single tick then exit
+
+install flags (macOS launchd LaunchAgent):
+  -interval N  tick every N seconds, running gns sync-all (default 300)
+  -daemon      resident mode: keep 'gns daemon' alive instead of interval ticks
+               (cadence = config sync_interval)
+  -exe path    program to launch (default: this binary)
+  -label s     launchd label (default: com.git-notes-sync)
+  -force       overwrite an existing plist
+
+uninstall flags:
+  -label s     launchd label (default: com.git-notes-sync)
 `
 
 // Run dispatches a command line. Returns the process error, if any.
@@ -95,6 +110,10 @@ func Run(args []string) error {
 		return cmdConfig(rest)
 	case "daemon":
 		return cmdDaemon(rest)
+	case "install":
+		return cmdInstall(rest)
+	case "uninstall":
+		return cmdUninstall(rest)
 	case "version", "--version", "-v":
 		fmt.Println("git-notes-sync " + version.Version + " (commit " + version.Commit + ")")
 		return nil
@@ -144,6 +163,22 @@ func resolveTarget(cfgPath, repoFlag, positional string) (string, error) {
 	return repoDir(""), nil
 }
 
+// stdoutIsTerminal reports whether stdout is a character device (a tty).
+func stdoutIsTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// logStamp returns a per-line timestamp prefix when stdout is redirected to a
+// file (cron / launchd logs), and nothing when writing to a terminal, so
+// interactive output stays clean while background logs carry timestamps.
+func logStamp() string {
+	if stdoutIsTerminal() {
+		return ""
+	}
+	return time.Now().Format("2006-01-02 15:04:05") + " "
+}
+
 var commonValueFlags = map[string]bool{
 	"c": true, "p": true, "repo": true, "message": true, "name": true,
 }
@@ -167,10 +202,10 @@ func cmdSync(args []string) error {
 		return err
 	}
 	rep := sync.Sync(dir, cfg, func(f string, a ...any) {
-		fmt.Printf("  %s\n", fmt.Sprintf(f, a...))
+		fmt.Printf("%s  %s\n", logStamp(), fmt.Sprintf(f, a...))
 	})
 	for _, s := range rep.Steps {
-		fmt.Println(" " + s)
+		fmt.Println(logStamp() + " " + s)
 	}
 	return rep.Err
 }
@@ -198,15 +233,15 @@ func cmdSyncAll(args []string) error {
 	for _, r := range repos {
 		path := r.ExpandedPath()
 		disp := r.DisplayName()
-		fmt.Printf("[%s] %s\n", disp, path)
+		fmt.Printf("%s[%s] %s\n", logStamp(), disp, path)
 		rep := sync.Sync(path, cfg, func(f string, a ...any) {
-			fmt.Printf("  %s\n", fmt.Sprintf(f, a...))
+			fmt.Printf("%s  %s\n", logStamp(), fmt.Sprintf(f, a...))
 		})
 		for _, s := range rep.Steps {
-			fmt.Println(" " + s)
+			fmt.Println(logStamp() + " " + s)
 		}
 		if rep.Err != nil {
-			fmt.Printf("[%s] ERROR: %v\n", disp, rep.Err)
+			fmt.Printf("%s[%s] ERROR: %v\n", logStamp(), disp, rep.Err)
 			failed = true
 		}
 	}
@@ -624,6 +659,119 @@ func parseKVArgs(args []string, flags map[string]*string) ([]string, error) {
 	return positional, nil
 }
 
+// cmdInstall registers a launchd LaunchAgent (macOS): either a stateless
+// StartInterval timer running `gns sync-all` (default) or a resident
+// `gns daemon` kept alive (--daemon).
+func cmdInstall(args []string) error {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	var interval int
+	var daemonMode, force bool
+	var exe, label string
+	fs.IntVar(&interval, "interval", 300, "tick seconds (interval mode)")
+	fs.BoolVar(&daemonMode, "daemon", false, "resident daemon mode")
+	fs.StringVar(&exe, "exe", "", "program to launch (default: this binary)")
+	fs.StringVar(&label, "label", "com.git-notes-sync", "launchd label")
+	fs.BoolVar(&force, "force", false, "overwrite existing plist")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return errors.New("usage: gns install [-interval N] [-daemon] [-exe path] [-label s] [-force]")
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home: %w", err)
+	}
+	if exe == "" {
+		exe, err = os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve executable: %w (pass -exe)", err)
+		}
+	}
+	if abs, err := filepath.Abs(exe); err == nil {
+		exe = abs
+	}
+
+	mode := service.ModeInterval
+	cfgPath := ""
+	if daemonMode {
+		mode = service.ModeDaemon
+		cfgPath = config.GlobalPath()
+	}
+	opts := service.LaunchOptions{
+		Label:    label,
+		Exe:      exe,
+		Mode:     mode,
+		Interval: interval,
+		Config:   cfgPath,
+		Home:     home,
+		LogDir:   service.DefaultLogDir(home),
+		Force:    force,
+	}
+	if err := opts.Validate(); err != nil {
+		return err
+	}
+	if err := service.Install(opts); err != nil {
+		return err
+	}
+
+	modeDesc := fmt.Sprintf("interval: every %ds, runs `gns sync-all` (stateless)", interval)
+	if daemonMode {
+		modeDesc = fmt.Sprintf("daemon: resident `gns daemon -c %s` (cadence = sync_interval config)", cfgPath)
+	}
+	fmt.Printf("installed launchd agent %s\n", label)
+	fmt.Printf("  plist: %s\n", opts.PlistPath())
+	fmt.Printf("  mode:  %s\n", modeDesc)
+	fmt.Printf("  logs:  %s.log\n", opts.LogDir+"/"+label)
+	fmt.Println("verify:  launchctl list | grep " + label)
+	fmt.Println("remove:  gns uninstall")
+
+	// environment preflight: surface launchd-specific risks (credentials,
+	// empty repo list, TCC-protected paths) right after a successful install.
+	paths := []string{}
+	if cfg, err := config.Load(cfgPath, ""); err != nil {
+		fmt.Printf("warn: cannot read global config (%v) — preflight repo checks skipped\n", err)
+	} else {
+		for _, r := range cfg.Repos.All() {
+			paths = append(paths, r.ExpandedPath())
+		}
+	}
+	if len(paths) == 0 {
+		fmt.Println("warn: no repos in global config — `gns sync-all` will fail until you add one (gns repos add <path>)")
+	}
+	for _, w := range service.Preflight(home, paths) {
+		fmt.Println(w)
+	}
+	return nil
+}
+
+// cmdUninstall stops and removes the launchd LaunchAgent.
+func cmdUninstall(args []string) error {
+	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
+	var label string
+	fs.StringVar(&label, "label", "com.git-notes-sync", "launchd label")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return errors.New("usage: gns uninstall [-label s]")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home: %w", err)
+	}
+	opts := service.LaunchOptions{Label: label, Home: home}
+	if err := service.Uninstall(opts); err != nil {
+		return err
+	}
+	if service.Loaded(opts) {
+		fmt.Println("note: agent is still registered (launchctl may need a moment)")
+	}
+	fmt.Printf("uninstalled launchd agent %s\n", label)
+	return nil
+}
+
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	var cfgPath string
@@ -636,6 +784,6 @@ func cmdDaemon(args []string) error {
 	if cfgPath == "" {
 		cfgPath = config.GlobalPath()
 	}
-	fmt.Printf("daemon started (config: %s, ctrl-c to stop)\n", cfgPath)
+	fmt.Printf("%sdaemon started (config: %s, ctrl-c to stop)\n", logStamp(), cfgPath)
 	return daemon.Run(cfgPath, once)
 }

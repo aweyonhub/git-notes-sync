@@ -89,7 +89,7 @@ gns status                        # ① 查看仓库状态（分支/落后领先
 gns sync                          # ② 手动同步一次：commit → fetch → merge → push
 
 # ③（推荐）多仓库场景：注册到全局配置，之后用名字同步
-gns repos add ~/notes -name notes  # 写入 ~/.config/git-notes-sync/config.toml
+gns repos add ~/notes -name notes  # 写入全局配置（macOS：~/Library/Application Support/git-notes-sync/config.toml）
 gns sync-all                       # 同步全部仓库 / gns sync notes 同步单个
 
 # ④（可选）定时任务，见「5. 定时调度」；单仓库零配置也可直接用默认值
@@ -214,7 +214,35 @@ gns daemon --once       # 只跑一轮（可用于测试）
 gns daemon -c my.toml   # 指定全局配置
 ```
 
-daemon 只做两件事：内部 timer 周期触发同步、缓存配置（配置变更自动热重载）。不做 watcher、无状态持久化。
+daemon 只做两件事：内部 timer 周期触发同步、缓存配置（配置变更自动热重载）。不做 watcher、无状态持久化。输出走 stderr（launchd 下即 `<label>.err.log`），时间戳格式（`YYYY-MM-DD HH:MM:SS`）与 interval 模式日志一致。
+
+### `gns install` / `gns uninstall` — macOS 一键注册/卸载 launchd（开机自启）
+
+```bash
+gns install             # 默认：launchd 每 300s 触发一次 `gns sync-all`（无状态，进程跑完即退）
+gns install --daemon    # 常驻：KeepAlive 守护 `gns daemon`（节奏由配置 sync_interval 控制）
+gns install -interval 600    # 改触发间隔
+# 其他 flag：-exe path（默认本二进制）、-label s（默认 com.git-notes-sync）、-force（覆盖已有）
+gns uninstall           # 停止并删除 LaunchAgent（-label 同 install）
+```
+
+生成的 plist 位于 `~/Library/LaunchAgents/<label>.plist`，日志在 `~/Library/Logs/<label>.log(.err.log)`。plist 自动包含：
+
+- `EnvironmentVariables`：`PATH`（含 gns 所在目录，npm 装的 gns 是 node 启动器，launchd 需能解析 shebang）、`HOME`（凭据/SSH 依赖）
+- `StartInterval`（定时模式）或 `KeepAlive`（daemon 模式）+ `RunAtLoad`（装完立即跑一轮）
+- `ProcessType=Background`、stdout/stderr 落盘日志
+
+> ⚠️ launchd 环境无终端、环境变量极少：HTTPS 仓库需 `git config --global credential.helper store` 并手动 push 一次存凭据（SSH agent 不会被继承）；已安装时重复 `gns install` 会报错，用 `-force` 覆盖或先 `gns uninstall`。
+
+安装成功后常用操作：
+
+```bash
+launchctl list | grep git-notes-sync                 # 查看 agent 运行状态（有 PID 即已加载）
+tail -f ~/Library/Logs/com.git-notes-sync.log        # 实时查看同步日志（每轮 sync 的输出，自动带时间戳）
+gns uninstall                                        # 卸载 agent（只删 launchd 注册和 plist，不碰二进制/配置/仓库）
+```
+
+> `gns install` 带 `-force` 时：直接覆盖已存在的 plist（先 bootout 旧注册再加载新的），用于切换模式（如 interval → daemon）或改参数；等价写法是 `gns uninstall && gns install ...`。
 
 ### `gns version` / `gns help`
 
@@ -232,14 +260,16 @@ gns help                # 命令帮助
 | 优先级 | 位置 | 说明 |
 |--------|------|------|
 | 低 | 内置默认值 | 见下表"默认"列 |
-| 中 | 全局配置 | Linux/macOS：`~/.config/git-notes-sync/config.toml`；Windows：`%APPDATA%\git-notes-sync\config.toml` |
+| 中 | 全局配置 | macOS：`~/Library/Application Support/git-notes-sync/config.toml`；Linux：`~/.config/git-notes-sync/config.toml`；Windows：`%APPDATA%\git-notes-sync\config.toml`（均为 `os.UserConfigDir()` 默认位置） |
 | 高 | 仓库配置 | 仓库根目录 `.notes-sync.toml`（随笔记仓库走，可进 git 版本管理） |
+
+> 自定义全局配置位置：设环境变量 `GNS_CONFIG`（支持 `~/` 展开）即可覆盖以上默认位置——所有命令（`config`/`repos`/`sync-all`/`daemon`）与 `gns install` 生成的 launchd plist（`-c` 参数）都会跟随。macOS 下想把配置放 `~/.config/git-notes-sync/config.toml`（dotfiles 场景）设 `export GNS_CONFIG=~/.config/git-notes-sync/config.toml` 即可；注意 `os.UserConfigDir()` 在 macOS 返回 `~/Library/Application Support` 且忽略 `XDG_CONFIG_HOME`。
 
 规则：后加载的覆盖先加载的（仓库 > 全局 > 默认）。也可用 `-c 文件` 显式指定并置于仓库配置之前加载。
 
 **推荐用法（本项目主推）：全局配置 + repos 列表**
 
-- **所有仓库参数统一放全局配置** `~/.config/git-notes-sync/config.toml`（Windows：`%APPDATA%\git-notes-sync\config.toml`），用 `gns repos add` 维护仓库名单，**无需在每个项目中放置配置文件**：
+- **所有仓库参数统一放全局配置**（macOS：`~/Library/Application Support/git-notes-sync/config.toml`；Linux：`~/.config/git-notes-sync/config.toml`；Windows：`%APPDATA%\git-notes-sync\config.toml`），用 `gns repos add` 维护仓库名单，**无需在每个项目中放置配置文件**：
   ```bash
   gns repos add ~/notes -name notes     # 写入全局配置
   gns sync notes / gns sync-all / gns daemon   # 按名字同步/全量同步/定时同步
@@ -275,7 +305,7 @@ gns help                # 命令帮助
 ### 4.3 完整示例
 
 ```toml
-# ~/.config/git-notes-sync/config.toml（推荐，全局）
+# 全局配置（macOS：~/Library/Application Support/git-notes-sync/config.toml；Linux：~/.config/git-notes-sync/config.toml；推荐）
 # 或 ./.notes-sync.toml（仓库级覆盖，一般不需要）
 
 auto_commit = true
@@ -334,7 +364,17 @@ PATH=/usr/local/bin:/usr/bin:/bin:/home/me/.npm-global/bin
 */5 * * * * gns sync-all >> /tmp/gns-sync.log 2>&1
 ```
 
-### macOS — launchd
+### macOS — launchd（推荐 `gns install` 一键，也可手写 plist）
+
+**方式一（推荐）：一键安装**
+
+```bash
+gns install             # 每 300s 触发一次 gns sync-all，开机自启
+gns install --daemon    # 或常驻 daemon 模式（节奏 = 配置 sync_interval）
+gns uninstall           # 卸载
+```
+
+**方式二：手写 plist**
 
 创建 `~/Library/LaunchAgents/com.git-notes-sync.plist`，核心配置：
 

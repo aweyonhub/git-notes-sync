@@ -48,18 +48,31 @@ gns config list|get|set|unset  # 查看与编辑配置
 gns resolve       # 列出已持久化的冲突 markers
 gns resolve --ours | --theirs   # 保留单侧，去 markers，提交并推送
 gns resolve --ai                # AI 语义合并（需配置 [ai]）
+gns install       # macOS：一键注册 launchd 定时任务（开机自启）
+gns uninstall     # macOS：卸载 launchd 定时任务
 gns daemon        # 轻量 daemon（Windows 首选，timer 轮询多仓库）
 gns version
 ```
 
 ### 定时调度
 
-- **Linux / macOS**：cron 无状态触发，建议 `*/5 * * * * cd ~/notes && gns sync`（cron 环境需完整：SSH agent、credential helper、PATH/HOME）。
+- **macOS**：`gns install` 一键注册 launchd LaunchAgent（开机自启）：
+
+  ```bash
+  gns install            # 默认：每 300s 触发一次 gns sync-all（无状态）
+  gns install --daemon   # 常驻 daemon 模式（KeepAlive，节奏 = 配置 sync_interval）
+  gns install -interval 600    # 改触发间隔；-force 覆盖已有配置
+  gns uninstall          # 卸载 agent（不影响二进制 / 配置 / 仓库）
+  ```
+
+  详细说明（plist 内容、日志、验证、凭据要求）见 [doc/USAGE.md](./doc/USAGE.md) §3/§5；也可手写 plist。
+
+- **Linux**：cron 无状态触发，建议 `*/5 * * * * cd ~/notes && gns sync`（cron 环境需完整：SSH agent、credential helper、PATH/HOME）。
 - **Windows**：`gns daemon`（内置 timer，默认 600s = 10min），配合任务计划程序开机自启；daemon 继承启动它的 shell 环境变量。
 
 ## 配置
 
-**推荐**：所有参数统一放全局配置 `~/.config/git-notes-sync/config.toml`（或 `%APPDATA%\git-notes-sync\config.toml`），用 `gns repos add` 维护多仓库名单，**无需在每个项目里放配置**；仓库级 `.notes-sync.toml` 仅作为单仓库覆盖（一般没必要）。完整示例见 [example.config.toml](./example.config.toml)。
+**推荐**：所有参数统一放全局配置（macOS：`~/Library/Application Support/git-notes-sync/config.toml`；Linux：`~/.config/git-notes-sync/config.toml`；Windows：`%APPDATA%\git-notes-sync\config.toml`，即 `os.UserConfigDir()` 默认位置），用 `gns repos add` 维护多仓库名单，**无需在每个项目里放配置**；仓库级 `.notes-sync.toml` 仅作为单仓库覆盖（一般没必要）。想自定义位置（如 macOS 下把配置放 `~/.config` 方便 dotfiles 管理）可设环境变量 `GNS_CONFIG`（支持 `~/` 展开，所有命令 + `gns install` 生成的 plist 自动跟随）。完整示例见 [example.config.toml](./example.config.toml)。
 
 ```toml
 auto_commit = true            # 是否自动提交工作区修改

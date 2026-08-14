@@ -181,7 +181,15 @@ func expandPath(p string) string {
 }
 
 // GlobalPath returns the default global config file location.
+// GNS_CONFIG overrides it (e.g. keep config in ~/.config for dotfiles
+// management); otherwise os.UserConfigDir() is used — macOS:
+// ~/Library/Application Support/git-notes-sync/config.toml (note: Darwin
+// ignores XDG_CONFIG_HOME), Linux: ~/.config/git-notes-sync/config.toml,
+// Windows: %AppData%\git-notes-sync\config.toml.
 func GlobalPath() string {
+	if p := os.Getenv("GNS_CONFIG"); p != "" {
+		return expandPath(p)
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		dir = "."

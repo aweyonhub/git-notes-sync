@@ -5,7 +5,6 @@ package daemon
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"time"
 
@@ -16,7 +15,12 @@ import (
 // Run loops sync over all configured repos every sync_interval seconds.
 // Global config is cached and reloaded when its mtime changes.
 func Run(globalPath string, once bool) error {
-	logf := log.Printf
+	// logf writes to stderr with the same timestamp format as the interval
+	// mode's redirected output (2006-01-02 15:04:05), so both scheduling
+	// styles produce uniform logs (launchd sends stderr to <label>.err.log).
+	logf := func(f string, a ...any) {
+		fmt.Fprintf(os.Stderr, "%s %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(f, a...))
+	}
 	cfg := config.Defaults()
 	var lastMtime time.Time
 

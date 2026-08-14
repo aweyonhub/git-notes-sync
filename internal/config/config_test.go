@@ -129,3 +129,35 @@ func TestExpandPathHomePrefix(t *testing.T) {
 		t.Fatalf("unexpected expansion: %q", got)
 	}
 }
+
+func TestGlobalPathGNSConfig(t *testing.T) {
+	origHome, _ := os.UserHomeDir()
+	defer t.Setenv("HOME", origHome)
+
+	// default: platform config dir + git-notes-sync/config.toml
+	p := GlobalPath()
+	if !strings.HasSuffix(p, "git-notes-sync"+string(os.PathSeparator)+"config.toml") {
+		t.Fatalf("default GlobalPath = %q, want suffix git-notes-sync/config.toml", p)
+	}
+
+	// GNS_CONFIG (absolute) overrides
+	t.Setenv("GNS_CONFIG", "/tmp/custom.toml")
+	if got := GlobalPath(); got != "/tmp/custom.toml" {
+		t.Fatalf("GNS_CONFIG absolute: GlobalPath = %q", got)
+	}
+
+	// GNS_CONFIG with ~ expansion
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GNS_CONFIG", "~/custom.toml")
+	if got := GlobalPath(); got != filepath.Join(home, "custom.toml") {
+		t.Fatalf("GNS_CONFIG with ~: GlobalPath = %q", got)
+	}
+
+	// empty GNS_CONFIG falls back to the original default (restore HOME first)
+	t.Setenv("HOME", origHome)
+	t.Setenv("GNS_CONFIG", "")
+	if got := GlobalPath(); got != p {
+		t.Fatalf("empty GNS_CONFIG: GlobalPath = %q, want %q", got, p)
+	}
+}

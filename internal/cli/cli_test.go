@@ -2,7 +2,9 @@ package cli
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeArgs(t *testing.T) {
@@ -25,6 +27,21 @@ func TestNormalizeArgs(t *testing.T) {
 		if !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: normalizeArgs(%v) = %v, want %v", c.name, c.in, got, c.want)
 		}
+	}
+}
+
+func TestLogStamp(t *testing.T) {
+	// under `go test`, stdout is a pipe, not a tty → timestamps are enabled
+	if stdoutIsTerminal() {
+		t.Skip("stdout is a terminal; cannot test redirected mode")
+	}
+	s := logStamp()
+	// format: YYYY-MM-DD HH:MM:SS + space
+	if len(s) != 20 {
+		t.Fatalf("logStamp() = %q, want 20-char timestamp + space", s)
+	}
+	if _, err := time.Parse("2006-01-02 15:04:05", strings.TrimSpace(s)); err != nil {
+		t.Fatalf("logStamp() = %q not parseable: %v", s, err)
 	}
 }
 
