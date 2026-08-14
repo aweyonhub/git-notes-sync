@@ -1,6 +1,6 @@
 # git-notes-sync 开发状态
 
-> 更新：2026-08-13 · 基于 [git-notes-sync.md](../git-notes-sync.md) 规格开发（规格第七节已固化实现决策）
+> 更新：2026-08-14 · 基于 [git-notes-sync.md](../git-notes-sync.md) 规格开发（规格第七节已固化实现决策）
 
 ---
 
@@ -12,7 +12,7 @@
 |---|---------|---------|------|
 | 1 | 是否内置纯 Go Git 实现 | 不做，调用系统 Git（规格 §1.3 非目标），`internal/git` 留替换扩展点 | ✅ 已落地 |
 | 2 | 冲突批量语义解决的调度方式 | `gns resolve --ours/--theirs/--ai` 手动触发；daemon 不做自动语义解决；AI 失败保留 markers 不丢数据 | ✅ 已落地 |
-| 3 | 定时任务间隔推荐值 | daemon `sync_interval=60s`（最小 5s）；cron 建议 `*/5 * * * *` | ✅ 已落地 |
+| 3 | 定时任务间隔推荐值 | daemon `sync_interval=600s`（最小 5s）；cron 建议 `*/5 * * * *` | ✅ 已落地 |
 
 ### 1.2 开发中歧义 → 默认决策（共 19 项，详见 spec §七）
 
@@ -48,8 +48,9 @@
 | AI 集成 | OpenAI-compatible API + 任意 CLI 双后端；stdin=diff / stdout=message；diff 截断 50KB；任何故障 fallback（`ai_fallback`） | ✅ fallback 测试 |
 | resolve | 双路检测冲突文件（`git grep` markers + `ls-files -u`）；`--ours/--theirs/--ai`；解决后 commit + push；CRLF 兼容 | ✅ 集成测试 |
 | status | 仓库/分支/upstream/ahead-behind/工作区变更/冲突列表 | ✅ 冒烟 |
-| daemon | 轻量 timer（默认 60s）；配置 mtime 变更热重载；多仓库 `repos` 遍历；`--once` 单次 | ✅ 冒烟 |
-| CLI | sync / commit / commit-ai / status / resolve / daemon / version / help | ✅ 冒烟 |
+| daemon | 轻量 timer（默认 600s = 10min）；配置 mtime 变更热重载；多仓库 `repos` 遍历；`--once` 单次 | ✅ 冒烟 |
+| config | `gns config list/get/set/unset` 标量配置编辑；行级编辑保留注释与 `[[repos]]` 块；类型推断（bool/int/string）；`list` 标注默认值覆盖 | ✅ 单测 |
+| CLI | sync / commit / commit-ai / status / resolve / repos / config / daemon / version / help | ✅ 冒烟 |
 
 ### 2.2 测试
 

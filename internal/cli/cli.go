@@ -28,6 +28,7 @@ usage:
   gns status [flags]      show worktree / remote / conflict status
   gns resolve [flags]     list or resolve persisted conflict markers
   gns repos <cmd>         manage the repo list: list | add | del
+  gns config <cmd>        inspect / edit config: list | get | set | unset
   gns daemon [flags]      run the lightweight timer daemon
   gns version
 
@@ -50,6 +51,14 @@ resolve flags:
   -theirs      keep remote side, drop markers, commit & push
   -ai          semantic merge via AI (config [ai] required)
   (no flag     lists conflicted files)
+
+config subcommands:
+  gns config list                 show effective values (merged) vs defaults
+  gns config get <key>            print one value (e.g. sync_interval, ai.timeout)
+  gns config set <key> <value>    write a value to the global config file
+  gns config unset <key>          remove a key (fall back to default)
+  -c path                        target config file (default: global config)
+  note: repos use 'gns repos'; arrays (text_extensions) edit by hand
 
 commit flags:
   -force       ignore debounce / max_wait timing
@@ -82,6 +91,8 @@ func Run(args []string) error {
 		return cmdResolve(rest)
 	case "repos":
 		return cmdRepos(rest)
+	case "config":
+		return cmdConfig(rest)
 	case "daemon":
 		return cmdDaemon(rest)
 	case "version", "--version", "-v":
@@ -402,6 +413,166 @@ func nameOrDefault(name, path string) string {
 		return name
 	}
 	return filepath.Base(strings.TrimRight(path, `/\`))
+}
+
+// cmdConfig inspects / edits scalar config keys (list | get | set | unset).
+// It operates on the global config (or -c file). repos and arrays are not
+// editable here — see `gns repos` / hand-edit.
+func cmdConfig(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: gns config list|get <key>|set <key> <value>|unset <key>")
+	}
+	sub := args[0]
+	rest := args[1:]
+	switch sub {
+	case "list":
+		return cmdConfigList(rest)
+	case "get":
+		return cmdConfigGet(rest)
+	case "set":
+		return cmdConfigSet(rest)
+	case "unset":
+		return cmdConfigUnset(rest)
+	default:
+		return fmt.Errorf("unknown config subcommand %q (list|get|set|unset)", sub)
+	}
+}
+
+// resolveCfgPath returns the config path from -c or the global default.
+func resolveCfgPath(flag string) string {
+	if flag == "" {
+		return config.GlobalPath()
+	}
+	return flag
+}
+
+// loadEffective loads the merged config for display; a missing file yields
+// Defaults() so `list`/`get` work before any config exists.
+func loadEffective(cfgPath string) (*config.Config, error) {
+	if _, err := os.Stat(cfgPath); err != nil {
+		return config.Defaults(), nil
+	}
+	return config.Load(cfgPath, "")
+}
+
+func cmdConfigList(rest []string) error {
+	var cfgPath string
+	args, err := parseKVArgs(rest, map[string]*string{"c": &cfgPath})
+	if err != nil {
+		return err
+	}
+	if len(args) > 0 {
+		return errors.New("usage: gns config list [-c config]")
+	}
+	p := resolveCfgPath(cfgPath)
+	merged, err := loadEffective(p)
+	if err != nil {
+		return err
+	}
+	defaults := config.Defaults()
+	for _, f := range config.AllFields() {
+		val, _ := config.FieldValue(merged, f.Section, f.Key)
+		def, _ := config.FieldValue(defaults, f.Section, f.Key)
+		display := val
+		if f.Kind == "string" {
+			display = `"` + val + `"`
+		}
+		line := fmt.Sprintf("%-26s = %s", f.Dotted(), display)
+		if val != def {
+			d := def
+			if f.Kind == "string" {
+				d = `"` + def + `"`
+			}
+			line += fmt.Sprintf("   [default: %s]", d)
+		}
+		fmt.Println(line)
+	}
+	fmt.Println("\nrepos: use `gns repos list`")
+	return nil
+}
+
+func cmdConfigGet(rest []string) error {
+	var cfgPath string
+	args, err := parseKVArgs(rest, map[string]*string{"c": &cfgPath})
+	if err != nil {
+		return err
+	}
+	if len(args) != 1 {
+		return errors.New("usage: gns config get <key> [-c config]")
+	}
+	dotted := args[0]
+	f, ok := config.LookupField(dotted)
+	if !ok {
+		return configKeyError(dotted)
+	}
+	p := resolveCfgPath(cfgPath)
+	merged, err := loadEffective(p)
+	if err != nil {
+		return err
+	}
+	val, _ := config.FieldValue(merged, f.Section, f.Key)
+	if f.Kind == "string" {
+		val = `"` + val + `"`
+	}
+	fmt.Println(val)
+	return nil
+}
+
+func cmdConfigSet(rest []string) error {
+	var cfgPath string
+	args, err := parseKVArgs(rest, map[string]*string{"c": &cfgPath})
+	if err != nil {
+		return err
+	}
+	if len(args) != 2 {
+		return errors.New("usage: gns config set <key> <value> [-c config]")
+	}
+	dotted, value := args[0], args[1]
+	if hint := config.UnsettableHint(dotted); hint != "" {
+		return errors.New(hint)
+	}
+	f, ok := config.LookupField(dotted)
+	if !ok {
+		return configKeyError(dotted)
+	}
+	p := resolveCfgPath(cfgPath)
+	if err := config.SetKey(p, f.Section, f.Key, value); err != nil {
+		return err
+	}
+	fmt.Printf("set %s = %s\n", dotted, value)
+	return nil
+}
+
+func cmdConfigUnset(rest []string) error {
+	var cfgPath string
+	args, err := parseKVArgs(rest, map[string]*string{"c": &cfgPath})
+	if err != nil {
+		return err
+	}
+	if len(args) != 1 {
+		return errors.New("usage: gns config unset <key> [-c config]")
+	}
+	dotted := args[0]
+	f, ok := config.LookupField(dotted)
+	if !ok {
+		return configKeyError(dotted)
+	}
+	p := resolveCfgPath(cfgPath)
+	removed, err := config.UnsetKey(p, f.Section, f.Key)
+	if err != nil {
+		return err
+	}
+	if removed {
+		fmt.Printf("unset %s\n", dotted)
+	} else {
+		fmt.Printf("%s was not set (using default)\n", dotted)
+	}
+	return nil
+}
+
+// configKeyError reports an unknown key, hinting at `config list`.
+func configKeyError(dotted string) error {
+	return fmt.Errorf("unknown config key %q (run `gns config list` to see available keys)", dotted)
 }
 
 // normalizeArgs moves flags to the front so flag.FlagSet can parse them,

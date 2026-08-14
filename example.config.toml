@@ -34,8 +34,7 @@ binary_strategy = "ours"      # ours (keep local copy) | abort (stop sync)
 
 [conflict]
 strategy = "preserve"         # preserve (keep markers + merge commit) | abort
-text_extensions = [".md", ".markdown", ".txt", ".yaml", ".yml", ".toml",
-                   ".json", ".org", ".rst", ".adoc", ".csv"]
+text_extensions = [".md", ".markdown", ".txt"]   # 视为文本的扩展名
 
 # ---- ai (optional; failures always fall back, never block sync) --------
 ai_fallback = "timestamp"     # timestamp | static
@@ -55,7 +54,7 @@ agent_file = "AGENTS.md"      # repo-relative agent instructions file, sent
                               # with the diff (default AGENTS.md; missing = ignored)
 
 # ---- daemon (global config only) ---------------------------------------
-sync_interval = 60            # seconds between ticks
+sync_interval = 600           # seconds between ticks (default 600 = 10min)
 retry_attempts = 3            # fetch/push retries (exponential backoff)
 
 # 多仓库列表（daemon / gns sync-all 使用；两种写法等价）：

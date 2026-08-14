@@ -39,6 +39,7 @@ gns commit        # 立即提交当前修改（忽略 debounce）
 gns commit-ai     # AI 生成 message 后提交
 gns status        # 工作区 / 远端 / 冲突状态
 gns repos list|add|del   # 维护多仓库列表
+gns config list|get|set|unset  # 查看与编辑配置
 gns resolve       # 列出已持久化的冲突 markers
 gns resolve --ours | --theirs   # 保留单侧，去 markers，提交并推送
 gns resolve --ai                # AI 语义合并（需配置 [ai]）
@@ -49,7 +50,7 @@ gns version
 ### 定时调度
 
 - **Linux / macOS**：cron 无状态触发，建议 `*/5 * * * * cd ~/notes && gns sync`（cron 环境需完整：SSH agent、credential helper、PATH/HOME）。
-- **Windows**：`gns daemon`（内置 timer，默认 60s），配合任务计划程序开机自启；daemon 继承启动它的 shell 环境变量。
+- **Windows**：`gns daemon`（内置 timer，默认 600s = 10min），配合任务计划程序开机自启；daemon 继承启动它的 shell 环境变量。
 
 ## 配置
 
@@ -66,7 +67,7 @@ binary_strategy = "ours"      # 二进制冲突：保留本地副本 | abort
 
 [conflict]
 strategy = "preserve"         # 文本冲突保留 markers 并继续同步 | abort
-text_extensions = [".md", ".txt", ".yaml", ".yml", ".toml"]
+text_extensions = [".md", ".markdown", ".txt"]
 
 [ai]                          # 可选；任何故障自动降级，不阻塞同步
 type = "api"                  # api | command

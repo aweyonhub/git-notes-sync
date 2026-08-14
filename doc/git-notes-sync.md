@@ -116,7 +116,7 @@ binary conflict → 独立策略（保留本地副本 / 停止并提示）
 ```toml
 [conflict]
 strategy = "preserve"
-text_extensions = [".md", ".txt", ".yaml", ".yml", ".toml"]
+text_extensions = [".md", ".markdown", ".txt"]
 ```
 
 ### 4.3 提交管理（Commit Management） · 提交与智能层
@@ -330,7 +330,7 @@ npm install -g github:aweyonhub/git-notes-sync
 | 11 | AI 输入大小 | `git diff --cached` 截断到 `max_diff_bytes`（默认 50KB） |
 | 12 | retry | fetch/push 各 `retry_attempts`（默认 3）次，退避 2s/4s/8s；push 因远端移动被拒时自动重 fetch + 重 merge，最多 3 轮 |
 | 13 | 并发锁 | `.git/git-notes-sync.lock`（O_EXCL + PID），10 分钟过期清理 |
-| 14 | daemon 默认间隔 | `sync_interval = 60s`（最小 5s）；cron 建议 `*/5 * * * *` |
+| 14 | daemon 默认间隔 | `sync_interval = 600s`（最小 5s）；cron 建议 `*/5 * * * *` |
 | 15 | 纯 Go Git 实现 | 不做，调用系统 Git（文档 §1.3 非目标）；git 封装集中在 `internal/git` 便于未来替换 |
 | 16 | Git 处于 merge/rebase | 检测到 MERGE_HEAD / CHERRY_PICK_HEAD / REVERT_HEAD / rebase-* 即跳过并提示，不自动干预 |
 | 17 | static 模式固定文本 | `commit_static_message`（默认 `"notes: auto sync"`） |

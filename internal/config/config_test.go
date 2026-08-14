@@ -88,14 +88,25 @@ path = "~/notes"
 
 func TestExpandPath(t *testing.T) {
 	home, _ := os.UserHomeDir()
+	// "/abs/p" is absolute on Unix but not on Windows (no drive letter);
+	// expandPath resolves it against the current drive there. Mirror that
+	// so the expected value follows the platform's filepath semantics.
+	absP := "/abs/p"
+	if !filepath.IsAbs(absP) {
+		if a, err := filepath.Abs(absP); err == nil {
+			absP = a
+		}
+	}
 	cases := map[string]string{
 		"~/notes":  filepath.Join(home, "notes"),
 		"~":        home,
-		"/abs/p":   "/abs/p",
+		"/abs/p":   absP,
 		"rel/path": mustAbs(t, "rel/path"),
 	}
 	for in, want := range cases {
-		if got := expandPath(in); got != want {
+		got := expandPath(in)
+		// Normalize path separators for cross-platform comparison.
+		if filepath.ToSlash(got) != filepath.ToSlash(want) {
 			t.Errorf("expandPath(%q) = %q, want %q", in, got, want)
 		}
 	}
@@ -113,7 +124,8 @@ func mustAbs(t *testing.T, p string) string {
 func TestExpandPathHomePrefix(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	got := expandPath("~/a/b")
-	if !strings.HasPrefix(got, home) || !strings.HasSuffix(got, "a/b") {
+	// Normalize separators so prefix/suffix checks are cross-platform.
+	if g, h := filepath.ToSlash(got), filepath.ToSlash(home); !strings.HasPrefix(g, h) || !strings.HasSuffix(g, "a/b") {
 		t.Fatalf("unexpected expansion: %q", got)
 	}
 }

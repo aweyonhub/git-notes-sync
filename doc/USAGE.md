@@ -180,10 +180,31 @@ gns repos del notes               # 删除（按 name 或 path）
 gns repos add ~/wiki -c my.toml   # 指定配置文件（默认全局配置）
 ```
 
+### `gns config` — 查看与编辑配置
+
+查看有效值（合并全局 + 仓库级配置后的结果）或编辑全局配置中的标量字段。写入采用行级编辑，保留注释与其他字段。
+
+```bash
+gns config list                    # 列出所有字段的有效值（覆盖默认时标 [default: X]）
+gns config get sync_interval       # 取单个值（嵌套用点号：ai.timeout）
+gns config set sync_interval 600   # 写入值（bool/int/string 自动类型推断）
+gns config set ai.timeout 90       # 写入嵌套表字段
+gns config set commit_message ai   # 字符串自动加 TOML 引号
+gns config unset sync_interval     # 删除 key，回落到默认
+gns config list -c my.toml         # 指定配置文件（默认全局配置）
+```
+
+说明：
+- key 用点号访问嵌套表，如 `ai.timeout`、`conflict.strategy`。
+- `list`/`get` 显示合并后的**有效值**；配置文件不存在时显示默认值。
+- `repos`（块）与 `conflict.text_extensions`（数组）不可用 `config set` 编辑——前者用 `gns repos add/del`，后者手编配置文件。
+- `set` 只做类型校验（bool/int/string）；业务约束（如 `sync_interval` 最小 5）在加载时生效。
+- daemon 会检测配置文件 mtime 变更自动热重载，`set` 后下一轮即生效。
+
 ### `gns daemon` — 轻量常驻（Windows 首选）
 
 ```bash
-gns daemon              # 按 sync_interval（默认 60s）定时同步所有 repos
+gns daemon              # 按 sync_interval（默认 600s = 10min）定时同步所有 repos
 gns daemon --once       # 只跑一轮（可用于测试）
 gns daemon -c my.toml   # 指定全局配置
 ```
@@ -232,11 +253,11 @@ gns help                # 命令帮助
 | `commit_static_message` | `"notes: auto sync"` | `static` 模式的固定文本 |
 | `ai_fallback` | `"timestamp"` | AI 失败时的降级：`timestamp` \| `static` |
 | `binary_strategy` | `"ours"` | 二进制冲突：`ours`（保留本地副本）\| `abort`（中止同步） |
-| `sync_interval` | `60` | daemon 轮询间隔（秒，最小 5） |
+| `sync_interval` | `600` | daemon 轮询间隔（秒，最小 5，默认 600 = 10 分钟） |
 | `retry_attempts` | `3` | fetch/push 网络失败重试次数（2s/4s/8s 退避） |
 | `repos` | `[]` | daemon 遍历的仓库列表；为空则当前目录 |
 | `[conflict] strategy` | `"preserve"` | 文本冲突：`preserve`（保留 markers 继续同步）\| `abort`（中止） |
-| `[conflict] text_extensions` | 见下 | 视为文本的扩展名列表，默认 `.md .markdown .txt .yaml .yml .toml .json .org .rst .adoc .csv` |
+| `[conflict] text_extensions` | 见下 | 视为文本的扩展名列表，默认 `.md .markdown .txt`（需其他格式自行扩展） |
 | `[ai] type` | 空 | `api`（OpenAI 兼容接口）\| `command`（任意 CLI） |
 | `[ai] base_url` | 空 | API 地址，如 `https://api.openai.com/v1` |
 | `[ai] model` | 空 | 模型名 |
@@ -259,7 +280,7 @@ commit_message = "timestamp"        # timestamp | static | ai
 commit_static_message = "notes: auto sync"
 ai_fallback = "timestamp"
 binary_strategy = "ours"
-sync_interval = 60
+sync_interval = 600
 retry_attempts = 3
 
 # 多仓库列表（daemon / gns sync-all / gns sync <name> 使用）
@@ -276,7 +297,7 @@ path = "~/work/wiki"
 
 [conflict]
 strategy = "preserve"
-text_extensions = [".md", ".txt", ".yaml", ".yml", ".toml"]
+text_extensions = [".md", ".markdown", ".txt"]
 
 [ai]
 type = "api"
@@ -335,7 +356,7 @@ launchctl load ~/Library/LaunchAgents/com.git-notes-sync.plist
 gns daemon
 ```
 
-启动后每 60s 自动同步所有 `repos`。开机自启：将 `gns daemon` 放入「启动」文件夹或任务计划程序。异常退出后重启即恢复，无状态恢复逻辑。
+启动后每 600s（10 分钟）自动同步所有 `repos`。开机自启：将 `gns daemon` 放入「启动」文件夹或任务计划程序。异常退出后重启即恢复，无状态恢复逻辑。
 
 **方式二：任务计划程序**
 
@@ -454,7 +475,7 @@ gns resolve --ai        # AI 语义合并（建议人工复核）
 | `commit` 报 "Please tell me who you are" | 未配置 git 身份：`git config --global user.name/email` |
 | 与 Obsidian Git 插件冲突？ | 不冲突。本工具在系统层操作 Git，不介入编辑器进程，可共存或互补 |
 | daemon 里 push 失败但终端成功 | 环境变量问题（SSH agent / credential helper / PATH），见「5. 环境注意事项」 |
-| 同步间隔多长合适 | 笔记场景 60s~5min 均可；文件多/仓库大时可调大 `sync_interval` 或 cron 间隔 |
+| 同步间隔多长合适 | 笔记场景 60s~10min 均可（默认 10min）；文件多/仓库大时可调大 `sync_interval` 或 cron 间隔 |
 
 ---
 

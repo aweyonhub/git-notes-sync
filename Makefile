@@ -1,5 +1,5 @@
 BIN := gns
-VERSION ?= 0.1.0
+VERSION ?= 0.1.1
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
 PKG := github.com/aweyonhub/git-notes-sync

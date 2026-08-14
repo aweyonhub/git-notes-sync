@@ -70,13 +70,12 @@ func Defaults() *Config {
 		CommitStaticMsg: "notes: auto sync",
 		AIFallback:      MessageTimestamp,
 		BinaryStrategy:  BinaryOurs,
-		SyncInterval:    60,
+		SyncInterval:    600,
 		RetryAttempts:   3,
 		Conflict: Conflict{
 			Strategy: StrategyPreserve,
 			TextExtensions: []string{
-				".md", ".markdown", ".txt", ".yaml", ".yml", ".toml",
-				".json", ".org", ".rst", ".adoc", ".csv",
+				".md", ".markdown", ".txt",
 			},
 		},
 		AI: AI{
