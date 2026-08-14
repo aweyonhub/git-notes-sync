@@ -23,11 +23,11 @@ jobs:
         run: go vet ./...
 
   npm-install:
-    # end-to-end check of the npm distribution: pack the package, install the
-    # tarball globally (postinstall downloads the platform binary from GitHub
-    # Releases), then run the binary. tgz install avoids npm's git-dependency
-    # reify race (npm bug); the postinstall path is identical to `npm install
-    # github:...`.
+    # end-to-end check of the npm distribution with the real user command
+    # (--install-links=true copies instead of symlinking git deps).
+    # Tag runs skip this job: it races the publish job (assets get deleted and
+    # re-uploaded → download 404 window); plain pushes are stable.
+    if: !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
