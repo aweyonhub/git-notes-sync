@@ -93,12 +93,12 @@
 
 Go 二进制 × npm 分发的 4 种方案对比（按尝试顺序）：
 
-| # | 方案 | 机制 | 优点 | 缺点/坑 | 结论 |
-|---|------|------|------|---------|------|
-| ① | **shim + postinstall 下载**（最早版：`bin → notes.js` shim，install.js 下载） | shim spawn 下载的二进制 | 单包简单；shim 可给友好报错；下载器可运维（镜像/代理/校验） | **npm 11 allow-scripts 默认拦截一切 install 脚本**（需 `--allow-scripts`/`approve-scripts` 放行）；`npm install github:...` 要求 package.json 在仓库根（否则 ENOENT）；GitHub Releases 下载 302 重定向需手动跟随 | 架构正确，被 allow-scripts 卡住 |
-| ② | **无 shim 直接链接**（bin → 固定名 `bin/gns.exe`） | postinstall 下载到固定路径，npm 直接链接原生二进制 | 无 JS 中间层；Windows 上 .exe 天然适配 | 二进制缺失（allow-scripts 拦截）时报莫名其妙的系统错误，无友好提示；Linux/mac 上固定名带 `.exe` 别扭；同样有 allow-scripts 问题 | 不推荐 |
-| ③ | **平台分包**（reasonix/esbuild 模式：optionalDependencies 子包 `@git-notes-sync/cli-<platform>`） | npm 按 os/cpu 自动装对应子包，二进制打进子包发布到 registry | **无 install 脚本 → 无 allow-scripts**；npm 原生机制；安装即用 | **本质仍是按平台下载二进制**（从 registry 拉子包）；需发布 6 个子包 + npm token + 版本同步；files 白名单含不存在的 bin 目录会 TAR_ENTRY_ERROR | 唯一能绕开 allow-scripts 的"下载"方案，代价是发布复杂度 |
-| ④ | **懒下载 shim**（候选：install.js 合并进 gns.js，首次运行时下载） | 无 postinstall，shim 检测二进制 → 缺失则下载 → 执行 | **无 install 脚本 → 无 allow-scripts**；重装/升级自动重下；单文件入口 | 首次运行需联网（体验比安装期差）；**不能下载到包目录**（sudo 全局安装时普通用户无写权限），须用用户缓存 `~/.cache/git-notes-sync/<version>/`；并发首跑会重复下载；postinstall 里跑 `gns --version` 验证会重新引入 allow-scripts（有脚本即拦），且 bin 链接在 lifecycle 之后创建、`gns` 不在 PATH | 待实现（2026-08 讨论中） |
+| # | 方案 | 机制 | allow-scripts | 优点 | 缺点/坑 | 结论 |
+|---|------|------|:---:|------|---------|------|
+| ① | **shim + postinstall 下载**（最早版：`bin → notes.js` shim，install.js 下载） | shim spawn 下载的二进制 | ⚠️ **拦**（npm 11 默认拦截一切 install 脚本，需 `--allow-scripts`/`approve-scripts` 放行） | 单包简单；shim 可给友好报错；下载器可运维（镜像/代理/校验） | `npm install github:...` 要求 package.json 在仓库根（否则 ENOENT）；GitHub Releases 下载 302 重定向需手动跟随 | 架构正确，被 allow-scripts 卡住 |
+| ② | **无 shim 直接链接**（bin → 固定名 `bin/gns.exe`） | postinstall 下载到固定路径，npm 直接链接原生二进制 | ⚠️ **拦**（同 ①） | 无 JS 中间层；Windows 上 .exe 天然适配 | 二进制缺失（allow-scripts 拦截）时报莫名其妙的系统错误，无友好提示；Linux/mac 上固定名带 `.exe` 别扭 | 不推荐 |
+| ③ | **平台分包**（reasonix/esbuild 模式：optionalDependencies 子包 `@git-notes-sync/cli-<platform>`） | npm 按 os/cpu 自动装对应子包，二进制打进子包发布到 registry | ✅ **不拦**（无 install 脚本） | npm 原生机制；安装即用 | **本质仍是按平台下载二进制**（从 registry 拉子包）；**需发布到 npm registry——本项目只想依赖 GitHub 分发**（6 个子包 + npm token + 版本同步）；files 白名单含不存在的 bin 目录会 TAR_ENTRY_ERROR | 唯一能绕开 allow-scripts 的"下载"方案，但违背"仅 GitHub 分发"的约束 |
+| ④ | **懒下载 shim**（候选：install.js 合并进 gns.js，首次运行时下载） | 无 postinstall，shim 检测二进制 → 缺失则下载 → 执行 | ✅ **不拦**（无 install 脚本） | 重装/升级自动重下；单文件入口 | 首次运行需联网（体验比安装期差）；**不能下载到包目录**（sudo 全局安装时普通用户无写权限），须用用户缓存 `~/.cache/git-notes-sync/<version>/`；并发首跑会重复下载；postinstall 里跑 `gns --version` 验证会重新引入 allow-scripts（有脚本即拦），且 bin 链接在 lifecycle 之后创建、`gns` 不在 PATH | 待实现（2026-08 讨论中） |
 
 **结论**：allow-scripts 是 npm 11 对所有带 install 脚本包的统一策略（esbuild/prisma 同款），与 shim 无关；①②④ 都有 postinstall 即被拦，③ 无脚本不拦但发布复杂。当前代码为 ①的加固版（redirect/checksum/proxy/override/版本验证）；④ 是下一步候选。
 
