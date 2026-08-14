@@ -27,7 +27,7 @@ jobs:
     # (--install-links=true copies instead of symlinking git deps).
     # Tag runs skip this job: it races the publish job (assets get deleted and
     # re-uploaded → download 404 window); plain pushes are stable.
-    if: !startsWith(github.ref, 'refs/tags/v')
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +38,11 @@ jobs:
         run: |
           # install-links=true: git deps are symlinked to cacache tmp by default
           # (breaks when tmp dir is cleaned); foreground-scripts avoids reify race
-          npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
+          for i in 1 2 3; do
+            npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync && break
+            echo "attempt $i failed (asset refresh window?), retrying in 20s..."
+            sleep 20
+          done
           gns --version
           gns help | head -3
           npm ls -g --depth=0 | grep git-notes-sync
