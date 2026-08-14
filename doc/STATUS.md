@@ -102,6 +102,17 @@ Go 二进制 × npm 分发的 4 种方案对比（按尝试顺序）：
 
 **结论**：allow-scripts 是 npm 11 对所有带 install 脚本包的统一策略（esbuild/prisma 同款），与 shim 无关；①②④ 都有 postinstall 即被拦，③ 无脚本不拦但发布复杂。当前代码为 ①的加固版（redirect/checksum/proxy/override/版本验证）；④ 是下一步候选。
 
+**npm 脚本拦截机制演进（重要，2026-08 实测确认）**：
+
+| 版本 | 机制 | 放行方式 |
+|------|------|---------|
+| npm 11 | `allow-scripts` 配置（连字符，全局 config） | `--allow-scripts=<pkg>` 或 `npm config set allow-scripts=<pkg> --location=user` 或 `npm approve-scripts` |
+| npm 12（2026-07-08 发布） | **`allowScripts` policy（驼峰，root 包策略）**——`allow-scripts` config 已失效 | 先 `npm install-scripts approve` 记录批准，再 **`npm rebuild`** 才真正执行脚本 |
+
+- **`npm rebuild` 语义**：默认 rebuild **当前目录项目的所有依赖**；全局包必须 `npm rebuild -g <pkg>`（只 rebuild 指定包，即重跑其 install 脚本）
+- **兜底**：任何版本都可用 `node <安装路径>/npm/scripts/install.js` 手动执行下载器，绕开全部拦截机制
+- 结论：npm 对 install 脚本的管控持续收紧，**无脚本方案（③④）的免疫价值在上升**
+
 **其他踩坑**（已修复）：
 - `npm install github:...` 打包：package.json 必须在仓库根（`npm/` 子目录 → ENOENT）
 - GitHub Releases 下载 302 → CDN，Node http 默认不跟随（需手动 redirect）
