@@ -78,7 +78,7 @@
 |--------|------|------|
 | P0 | ~~创建 GitHub 仓库并替换占位符~~ | ✅ 已完成：https://github.com/aweyonhub/git-notes-sync（module path 同步更新） |
 | P0 | ~~打 tag 发布 v0.1.0~~ | ✅ 已完成（重新发布，旧版已删）：v0.1.0 CI 全绿，Release 6 资产（5 平台二进制 + `checksums.txt`）（https://github.com/aweyonhub/git-notes-sync/releases/tag/v0.1.0） |
-| P0 | ~~验证 npm 安装链路~~ | ✅ **Windows 实测通过（2026-08-14）**：`npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev` 成功，postinstall 下载二进制，`gns --version` 正常；关键修复：files 白名单改目录形式（npm 11 Windows 对精确文件路径的 bug）、shim 补 shebang；CI 有 npm-install job 持续守护 |
+| P0 | ~~验证 npm 安装链路~~ | ✅ **Windows 实测通过（2026-08-14）**：`npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev` 成功，postinstall 下载二进制，`gns --version` 正常；关键修复：files 白名单改目录形式、shim 补 shebang、**--install-links=true 强制复制解包**（git 依赖默认符号链接到 cacache 临时目录是失效根源）；CI 有 npm-install job 持续守护 |
 | P1 | 真实 AI endpoint 冒烟 | 本地 Ollama 或任意 OpenAI-compatible 服务验证 `commit_message="ai"` 与 `resolve --ai` |
 | P1 | Windows 实机验证 | daemon 行为、credential helper / SSH 环境继承、autocrlf 场景 |
 | P2 | `gns resolve` 交互式模式 | 逐个文件选择 ours/theirs/AI（当前为全局 flag 一次性处理） |
@@ -117,7 +117,9 @@ Go 二进制 × npm 分发的 4 种方案对比（按尝试顺序）：
 - `npm install github:...` 打包：package.json 必须在仓库根（`npm/` 子目录 → ENOENT）
 - GitHub Releases 下载 302 → CDN，Node http 默认不跟随（需手动 redirect）
 - `files` 白名单含打包时不存在的目录 → TAR_ENTRY_ERROR
-- npm 对 git 依赖的 reify 竞态：跑 postinstall 时目录被 move → `spawn sh ENOENT`（npm bug，用 tgz 安装绕过 CI 验证）
+- npm 对 git 依赖的 reify 竞态：跑 postinstall 时目录被 move → `spawn sh ENOENT`（npm bug，Linux/Windows 都会撞，概率性；CI 用 pack + tgz 绕过验证）。**规避路径**：让 postinstall 被 allow-scripts 拦（不跑即不撞），再 `npm approve-scripts <pkg>` + `npm rebuild -g <pkg>` 在稳定目录执行
+- npm 缓存/残留导致包内容混合：多次安装不同结构版本后，可能出现 package.json 新、文件旧（MODULE_NOT_FOUND）。处理：`npm cache clean --force` + 删除 `node_modules/git-notes-sync` 后重装
+- **git 依赖符号链接（根源级发现，2026-08-14）**：npm 对 `github:` 语法默认符号链接到 `cacache/tmp/git-cloneXXX`（`npm list -g` 显示 `-> ...\git-cloneXXX`），临时目录被清后包失效——这才是 MODULE_NOT_FOUND/竞态的根源。**修复：`--install-links=true --foreground-scripts`**（强制复制解包 + 前台跑脚本）。实测：`--install-links=false` 安装失败或留下失效链接；`true` 装成普通目录一切正常。完整命令：`npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync`
 - shim 必须有 shebang（`#!/usr/bin/env node`），否则 bash 当 shell 解析
 - .gitignore 通配符误伤源文件（`gns*` 曾忽略 `gns.js`）
 

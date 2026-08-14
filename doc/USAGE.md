@@ -19,9 +19,9 @@ gns --version        # 或 notes-sync --version
 
 ```bash
 # 正式版（main 分支，对应最新 Release 版本）
-npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
+npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
 # 开发版（dev 分支，测试最新代码）
-npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev
+npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev
 ```
 
 > 版本对应关系：包 `package.json` 的 version = git tag = GitHub Release = 下载器拉取的资产版本；`#dev` 分支若 package.json 版本未变，下载的仍是当前 Release 的二进制（测试安装链路 OK，测试新二进制需先发对应版本或本地构建）。
@@ -29,13 +29,15 @@ npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#de
 **npm 11+ 默认拦截 install 脚本**（allow-scripts 安全机制），首次安装需放行（不同 npm 小版本的提示不同，任选其一）：
 
 ```bash
-# 方式一：安装时放行
-npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
+# 方式一：安装时放行（推荐，配合 --install-links=true）
+npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
 # 方式二：永久放行（user 级配置）
 npm config set allow-scripts=git-notes-sync --location=user
 # 方式三：npm 11.2+ 的 approve 流程（按提示执行）
 npm approve-scripts git-notes-sync
 ```
+
+> **为什么必须 `--install-links=true`**（2026-08-14 实测）：npm 对 git 依赖（`github:` 语法）默认符号链接到 `cacache/tmp/git-cloneXXX` 临时目录，`npm list -g` 显示 `-> ...\git-cloneXXX`；临时目录被 npm 清理后包就失效（MODULE_NOT_FOUND 的根源）。`--install-links=true` 强制复制解包成普通目录；`--foreground-scripts` 前台执行脚本避免竞态。
 
 **下载器环境变量**（企业代理/内网镜像/固定版本）：
 
