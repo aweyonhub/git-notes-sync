@@ -16,8 +16,8 @@ postinstall 按平台从 GitHub Releases 下载对应二进制（`gns-<platform>
 ```bash
 # 正式版（main 分支 = 最新 Release v0.1.0）
 npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
-# 开发版（dev 分支，下载对应平台的 bin）
-npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev
+# 开发版（临时开发分支，如 <branch>）
+npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#<branch>
 ```
 
 > **三个 flag 缺一不可**：`--install-links=true` 强制复制解包（npm 对 git 依赖默认是符号链接到 cacache 临时目录，临时目录被清后包就失效）；`--foreground-scripts` 前台跑 postinstall（避免后台竞态）；`--allow-scripts=git-notes-sync` 放行 postinstall（npm 11+ 默认拦截 install 脚本；npm 12 需 `npm install-scripts approve` + `npm rebuild -g git-notes-sync`）。

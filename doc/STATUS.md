@@ -85,13 +85,13 @@
 | P2 | cron 示例文档完善 | USAGE §5 已有 cron/launchd/Windows 三种示例，可补充 launchd plist 完整模板 |
 | P2 | `gns install` / `gns uninstall` 注册/管理系统服务 | 一键注册 daemon 开机自启并反注册：Linux systemd user unit（`~/.config/systemd/user/gns.service`）；macOS launchd LaunchAgent（`~/Library/LaunchAgents/com.git-notes-sync.plist`）；Windows 任务计划程序（`schtasks /Create`，可选真服务需 nssm / x/sys/windows/svc）；`uninstall` 删除对应注册并停止 |
 | P2 | 非 git 目录纳入统一 git 仓库管理 | 可配置多个非 git 目录（桌面/下载/配置目录等），定时增量复制到集中 git 仓库，由该仓库承担版本管理与远端同步。设计要点：配置 `[[sync]]` 映射（源目录 → 集中仓库内子路径）；复用 daemon timer 触发；增量检测（mtime+size 或内容 hash）避免全量拷贝；复制前先 pull 合并远端，复制后 commit + push（走现有同步链路）；删除策略默认不传播（源删除仅记录，防误删），可选 `delete = true`；集中仓库被多端修改时按现有冲突模型处理 |
-| P3 | 可选增强 | `gns init` 生成示例配置 |
+| P3 | 一键安装脚本 `install.sh`/`install.ps1` | 封装冗长命令（`--install-links=true --foreground-scripts --allow-scripts=git-notes-sync` 参数过多），用户只跑一条命令：检测平台 → 下载对应 tgz/二进制 + 校验 checksum → 安装/提示；也可考虑 curl 直装（不依赖 npm） |
 | P3 | 可选：GoReleaser 替代手写 Actions | 多平台发布更成熟（changelog/Homebrew 等）；checksums 已实现（CI 生成 `checksums.txt`），当前 5 平台手写够用 |
 | P3 | 可选：shell 补全 | `gns completion bash\|zsh\|fish`，npm 生态用户偏好 |
 
 ## 四、npm 分发方案踩坑记录（2026-08 讨论定稿）
 
-Go 二进制 × npm 分发的 4 种方案对比（按尝试顺序）：
+Go 二进制 × npm 分发的 5 种方案对比（按尝试顺序）：
 
 | # | 方案 | 机制 | allow-scripts | 优点 | 缺点/坑 | 结论 |
 |---|------|------|:---:|------|---------|------|
@@ -99,6 +99,7 @@ Go 二进制 × npm 分发的 4 种方案对比（按尝试顺序）：
 | ② | **无 shim 直接链接**（bin → 固定名 `bin/gns.exe`） | postinstall 下载到固定路径，npm 直接链接原生二进制 | ⚠️ **拦**（同 ①） | 无 JS 中间层；Windows 上 .exe 天然适配 | 二进制缺失（allow-scripts 拦截）时报莫名其妙的系统错误，无友好提示；Linux/mac 上固定名带 `.exe` 别扭 | 不推荐 |
 | ③ | **平台分包**（reasonix/esbuild 模式：optionalDependencies 子包 `@git-notes-sync/cli-<platform>`） | npm 按 os/cpu 自动装对应子包，二进制打进子包发布到 registry | ✅ **不拦**（无 install 脚本） | npm 原生机制；安装即用 | **本质仍是按平台下载二进制**（从 registry 拉子包）；**需发布到 npm registry——本项目只想依赖 GitHub 分发**（6 个子包 + npm token + 版本同步）；files 白名单含不存在的 bin 目录会 TAR_ENTRY_ERROR | 唯一能绕开 allow-scripts 的"下载"方案，但违背"仅 GitHub 分发"的约束 |
 | ④ | **懒下载 shim**（候选：install.js 合并进 gns.js，首次运行时下载） | 无 postinstall，shim 检测二进制 → 缺失则下载 → 执行 | ✅ **不拦**（无 install 脚本） | 重装/升级自动重下；单文件入口 | 首次运行需联网（体验比安装期差）；**不能下载到包目录**（sudo 全局安装时普通用户无写权限），须用用户缓存 `~/.cache/git-notes-sync/<version>/`；并发首跑会重复下载；postinstall 里跑 `gns --version` 验证会重新引入 allow-scripts（有脚本即拦），且 bin 链接在 lifecycle 之后创建、`gns` 不在 PATH | 待实现（2026-08 讨论中） |
+| ⑤ | **tgz 上传 Release + URL 安装**（候选，2026-08-14） | `npm pack` 生成 `git-notes-sync-<version>.tgz` 上传 GitHub Release，用户 `npm install -g --allow-scripts=git-notes-sync https://github.com/aweyonhub/git-notes-sync/releases/download/v<version>/git-notes-sync-<version>.tgz`；tarball 走标准解包（复制到 node_modules，非 git 依赖链接） | ⚠️ **拦**（postinstall 仍需放行） | **无 git 依赖符号链接问题**（链接到 cacache 临时目录的根源）；无 reify 竞态（postinstall 在真实包目录跑）；与现有下载器/checksum 链路完全复用 | Release 多一个资产；postinstall 仍需 allow-scripts；URL 安装不如 `github:` 直观 | 备选：现状 `--install-links=true` 已解决链接问题；npm 12 若对 git 依赖行为再变时启用 |
 
 **结论**：allow-scripts 是 npm 11 对所有带 install 脚本包的统一策略（esbuild/prisma 同款），与 shim 无关；①②④ 都有 postinstall 即被拦，③ 无脚本不拦但发布复杂。当前代码为 ①的加固版（redirect/checksum/proxy/override/版本验证）；④ 是下一步候选。
 

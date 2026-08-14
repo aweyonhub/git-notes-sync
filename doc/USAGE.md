@@ -20,11 +20,11 @@ gns --version        # 或 notes-sync --version
 ```bash
 # 正式版（main 分支，对应最新 Release 版本）
 npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
-# 开发版（dev 分支，测试最新代码）
-npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev
+# 开发版（临时开发分支，如 <branch>）
+npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#<branch>
 ```
 
-> 版本对应关系：包 `package.json` 的 version = git tag = GitHub Release = 下载器拉取的资产版本；`#dev` 分支若 package.json 版本未变，下载的仍是当前 Release 的二进制（测试安装链路 OK，测试新二进制需先发对应版本或本地构建）。
+> 版本对应关系：包 `package.json` 的 version = git tag = GitHub Release = 下载器拉取的资产版本；`#<branch>` 分支若 package.json 版本未变，下载的仍是当前 Release 的二进制（测试安装链路 OK，测试新二进制需先发对应版本或本地构建）。
 
 **npm 11+ 默认拦截 install 脚本**（allow-scripts 安全机制），首次安装需放行（不同 npm 小版本的提示不同，任选其一）：
 

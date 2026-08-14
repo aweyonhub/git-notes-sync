@@ -283,7 +283,7 @@ npm install -g github:aweyonhub/git-notes-sync
 
 **优势**：用户一条 `npm install` 完成安装，无需 Go 环境、无需手动下载；npm 提供 PATH 注册与版本管理。
 
-**安装来源**：正式版 `github:aweyonhub/git-notes-sync`（main = 最新 Release）；开发版追加 `#dev` 分支。版本对应关系：package.json version = git tag = Release = 下载器拉取的资产版本。
+**安装来源**：正式版 `github:aweyonhub/git-notes-sync`（main = 最新 Release）；开发版追加 `#<临时分支>`。版本对应关系：package.json version = git tag = Release = 下载器拉取的资产版本。
 
 ---
 
