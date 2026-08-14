@@ -104,6 +104,8 @@ Go 二进制 × npm 分发的 5 种方案对比（按尝试顺序）：
 
 **结论**：allow-scripts 是 npm 11 对所有带 install 脚本包的统一策略（esbuild/prisma 同款），与 shim 无关；①②④ 都有 postinstall 即被拦，③ 无脚本不拦但发布复杂。当前代码为 ①的加固版（redirect/checksum/proxy/override/版本验证）；④ 是下一步候选。
 
+**方案③发布权限与流程补充（2026-08-14 实测）**：无需任何申请/审核，npmjs.com 免费注册即可发布——public 包无限量免费（private 才付费：Pro/Org）；npm 强制 publish 前开启 2FA（账号安全要求，非门槛）；scope **无预注册机制**（先发布 `@git-notes-sync/xxx` 的账号即获得该 scope，与 GitHub org 无关）；已实测 `git-notes-sync` 与 `@git-notes-sync/cli-linux-x64` 等名字均未被占用。CI 自动发布用 granular access token（automation 类型，npm 网站生成）。发布流程：`npm publish --access public`（主包 + 6 平台子包，版本全部对齐），子包二进制可打进包内或从 GitHub Release 下载。
+
 **npm 脚本拦截机制演进（重要，2026-08 实测确认）**：
 
 | 版本 | 机制 | 放行方式 |
