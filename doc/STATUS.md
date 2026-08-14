@@ -78,7 +78,7 @@
 |--------|------|------|
 | P0 | ~~创建 GitHub 仓库并替换占位符~~ | ✅ 已完成：https://github.com/aweyonhub/git-notes-sync（module path 同步更新） |
 | P0 | ~~打 tag 发布 v0.1.0~~ | ✅ 已完成：v0.1.0 CI 全绿（test + 5 平台交叉编译），Release 5 资产齐全（https://github.com/aweyonhub/git-notes-sync/releases/tag/v0.1.0） |
-| P0 | 验证 npm 安装链路 | ✅ 下载器已实测（redirect 跟随 / SHA-256 校验 / 版本验证 / 失败防护）；CI 增加 npm-install job（pack + tgz 安装 + gns 运行）；npm 11 需 `--allow-scripts=git-notes-sync`（文档已说明） |
+| P0 | ~~验证 npm 安装链路~~ | ✅ **Windows 实测通过（2026-08-14）**：`npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev` 成功，postinstall 下载二进制，`gns --version` 正常；关键修复：files 白名单改目录形式（npm 11 Windows 对精确文件路径的 bug）、shim 补 shebang；CI 有 npm-install job 持续守护 |
 | P1 | 真实 AI endpoint 冒烟 | 本地 Ollama 或任意 OpenAI-compatible 服务验证 `commit_message="ai"` 与 `resolve --ai` |
 | P1 | Windows 实机验证 | daemon 行为、credential helper / SSH 环境继承、autocrlf 场景 |
 | P2 | `gns resolve` 交互式模式 | 逐个文件选择 ours/theirs/AI（当前为全局 flag 一次性处理） |
