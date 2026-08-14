@@ -9,15 +9,22 @@
 
 ### 方式一：npm（推荐，无需 Go 环境）
 
-```bash
-npm install -g github:aweyonhub/git-notes-sync
-```
-
 postinstall 按平台从 GitHub Releases 下载对应二进制（`gns-<platform>-<arch>[.exe]`），自动跟随重定向、校验 SHA-256（Release 的 `checksums.txt`）、验证 `--version` 后落盘。安装后提供两个等价命令：
 
 ```bash
 gns --version        # 或 notes-sync --version
 ```
+
+**两种安装来源**（对应平台 bin 下载逻辑相同，只是分支不同）：
+
+```bash
+# 正式版（main 分支，对应最新 Release 版本）
+npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
+# 开发版（dev 分支，测试最新代码）
+npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev
+```
+
+> 版本对应关系：包 `package.json` 的 version = git tag = GitHub Release = 下载器拉取的资产版本；`#dev` 分支若 package.json 版本未变，下载的仍是当前 Release 的二进制（测试安装链路 OK，测试新二进制需先发对应版本或本地构建）。
 
 **npm 11+ 默认拦截 install 脚本**（allow-scripts 安全机制），首次安装需放行（不同 npm 小版本的提示不同，任选其一）：
 

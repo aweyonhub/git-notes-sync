@@ -261,12 +261,13 @@ gns daemon       # 启动轻量 daemon（可选，Windows 首选）
 npm install -g github:aweyonhub/git-notes-sync
 ```
 
-**实现机制**：
+**实现机制**（go-npm 模式，方案演进见 doc/STATUS.md「npm 分发方案踩坑记录」）：
 
-1. **交叉编译**：Go 交叉编译各平台二进制（`windows/amd64`、`darwin/amd64`、`darwin/arm64`、`linux/amd64`、`linux/arm64`），通过 GitHub Actions 流水线自动构建并发布到 GitHub Releases（或预构建提交到仓库）。
-2. **npm 包壳**：npm 包本身不含二进制，仅包含 `postinstall` 脚本和平台映射表。
-3. **postinstall 下载**：安装时检测当前 OS / arch，从 GitHub Releases 下载对应二进制到包内固定路径 `bin/gns.exe`（全平台统一文件名）。
-4. **bin 直接链接二进制**：`package.json` 的 `bin` 字段直接指向 `bin/gns.exe`，npm 把原生二进制本身链接到 `node_modules/.bin/` —— **无 JS 路由中间层**。
+1. **交叉编译**：Go 交叉编译各平台二进制（`windows/amd64`、`darwin/amd64`、`darwin/arm64`、`linux/amd64`、`linux/arm64`），GitHub Actions 打 tag 时自动构建并发布到 GitHub Releases，同时生成 `checksums.txt`（SHA-256 清单）。
+2. **npm 包壳**：package.json 位于仓库根（`npm install github:...` 要求）；包内含 `npm/bin/gns.js`（入口 shim）与 `npm/scripts/install.js`（下载器）。
+3. **postinstall 下载**：检测当前 OS / arch，从 GitHub Releases 下载对应平台二进制到 `npm/bin/gns[.exe]`——跟随 302 重定向、校验 SHA-256（`checksums.txt`，缺失降级跳过）、执行 `--version` 验证后原子落盘；支持代理（`HTTPS_PROXY`）与镜像（`GNS_RELEASE_BASE_URL`）。
+4. **bin 链接 shim**：`bin` 字段指向 `npm/bin/gns.js`（Node shim，spawn 下载的二进制，缺失时给出友好提示）。
+5. **allow-scripts**：npm 11+ 默认拦截 install 脚本，需 `--allow-scripts=git-notes-sync` 放行（npm 12 改为 `npm install-scripts approve` + `npm rebuild -g`）。
 
 **平台映射示例**：
 
@@ -281,6 +282,8 @@ npm install -g github:aweyonhub/git-notes-sync
 ```
 
 **优势**：用户一条 `npm install` 完成安装，无需 Go 环境、无需手动下载；npm 提供 PATH 注册与版本管理。
+
+**安装来源**：正式版 `github:aweyonhub/git-notes-sync`（main = 最新 Release）；开发版追加 `#dev` 分支。版本对应关系：package.json version = git tag = Release = 下载器拉取的资产版本。
 
 ---
 

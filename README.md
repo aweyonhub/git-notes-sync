@@ -11,12 +11,16 @@ Go 实现，调用系统 Git，不重新实现 Git。详见 [doc/git-notes-sync.
 
 ### npm（推荐，免编译）
 
+postinstall 按平台从 GitHub Releases 下载对应二进制（`gns-<platform>-<arch>[.exe]`，含 SHA-256 校验），提供 `gns`（主命令）/ `notes-sync`（别名）。
+
 ```bash
-npm install -g github:aweyonhub/git-notes-sync
-# 提供 gns（主命令）/ notes-sync（别名）
+# 正式版（main 分支 = 最新 Release v0.1.0）
+npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
+# 开发版（dev 分支，下载对应平台的 bin）
+npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev
 ```
 
-安装时按平台从 GitHub Releases 下载对应二进制（`scripts/install.js` + 平台映射表）。
+> npm 11+ 默认拦截 install 脚本（allow-scripts 安全机制），`--allow-scripts=git-notes-sync` 放行；npm 12 需 `npm install-scripts approve` + `npm rebuild -g git-notes-sync`。
 
 ### 手动构建
 
@@ -95,4 +99,4 @@ internal/
   cli/      命令分发
 ```
 
-发布：打 tag `v0.1.0` → GitHub Actions 交叉编译并发布 Release → npm 壳 `postinstall` 下载。
+发布：打 tag（如 `v0.1.0`）→ GitHub Actions 测试 + 交叉编译 5 平台 + 生成 `checksums.txt` → Release → npm 壳 `postinstall` 下载（SHA-256 校验）。开发分支：`dev`。

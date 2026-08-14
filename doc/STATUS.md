@@ -77,16 +77,16 @@
 | 优先级 | 事项 | 说明 |
 |--------|------|------|
 | P0 | ~~创建 GitHub 仓库并替换占位符~~ | ✅ 已完成：https://github.com/aweyonhub/git-notes-sync（module path 同步更新） |
-| P0 | ~~打 tag 发布 v0.1.0~~ | ✅ 已完成：v0.1.0 CI 全绿（test + 5 平台交叉编译），Release 5 资产齐全（https://github.com/aweyonhub/git-notes-sync/releases/tag/v0.1.0） |
+| P0 | ~~打 tag 发布 v0.1.0~~ | ✅ 已完成（重新发布，旧版已删）：v0.1.0 CI 全绿，Release 6 资产（5 平台二进制 + `checksums.txt`）（https://github.com/aweyonhub/git-notes-sync/releases/tag/v0.1.0） |
 | P0 | ~~验证 npm 安装链路~~ | ✅ **Windows 实测通过（2026-08-14）**：`npm install -g --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev` 成功，postinstall 下载二进制，`gns --version` 正常；关键修复：files 白名单改目录形式（npm 11 Windows 对精确文件路径的 bug）、shim 补 shebang；CI 有 npm-install job 持续守护 |
 | P1 | 真实 AI endpoint 冒烟 | 本地 Ollama 或任意 OpenAI-compatible 服务验证 `commit_message="ai"` 与 `resolve --ai` |
 | P1 | Windows 实机验证 | daemon 行为、credential helper / SSH 环境继承、autocrlf 场景 |
 | P2 | `gns resolve` 交互式模式 | 逐个文件选择 ours/theirs/AI（当前为全局 flag 一次性处理） |
-| P2 | cron 示例文档完善 | README 已有 `*/5 * * * *` 示例，可补充 launchd plist 模板 |
+| P2 | cron 示例文档完善 | USAGE §5 已有 cron/launchd/Windows 三种示例，可补充 launchd plist 完整模板 |
 | P2 | `gns install` / `gns uninstall` 注册/管理系统服务 | 一键注册 daemon 开机自启并反注册：Linux systemd user unit（`~/.config/systemd/user/gns.service`）；macOS launchd LaunchAgent（`~/Library/LaunchAgents/com.git-notes-sync.plist`）；Windows 任务计划程序（`schtasks /Create`，可选真服务需 nssm / x/sys/windows/svc）；`uninstall` 删除对应注册并停止 |
 | P2 | 非 git 目录纳入统一 git 仓库管理 | 可配置多个非 git 目录（桌面/下载/配置目录等），定时增量复制到集中 git 仓库，由该仓库承担版本管理与远端同步。设计要点：配置 `[[sync]]` 映射（源目录 → 集中仓库内子路径）；复用 daemon timer 触发；增量检测（mtime+size 或内容 hash）避免全量拷贝；复制前先 pull 合并远端，复制后 commit + push（走现有同步链路）；删除策略默认不传播（源删除仅记录，防误删），可选 `delete = true`；集中仓库被多端修改时按现有冲突模型处理 |
 | P3 | 可选增强 | `gns init` 生成示例配置 |
-| P3 | 可选：GoReleaser 替代手写 Actions | 多平台发布更成熟（checksums/changelog/Homebrew 等）；当前 5 平台手写够用，仅建议补充 checksums 生成 |
+| P3 | 可选：GoReleaser 替代手写 Actions | 多平台发布更成熟（changelog/Homebrew 等）；checksums 已实现（CI 生成 `checksums.txt`），当前 5 平台手写够用 |
 | P3 | 可选：shell 补全 | `gns completion bash\|zsh\|fish`，npm 生态用户偏好 |
 
 ## 四、npm 分发方案踩坑记录（2026-08 讨论定稿）
