@@ -14,4 +14,8 @@ func Uninstall(o LaunchOptions) error {
 
 func DefaultLogDir(home string) string { return "" }
 
+func LogPath(label string) string { return "" }
+
+func SystemdUnitExists(label string) bool { return false }
+
 func Loaded(o LaunchOptions) bool { return false }

@@ -48,7 +48,7 @@ gns config list|get|set|unset  # 查看与编辑配置
 gns resolve       # 列出已持久化的冲突 markers
 gns resolve --ours | --theirs   # 保留单侧，去 markers，提交并推送
 gns resolve --ai                # AI 语义合并（需配置 [ai]）
-gns install       # 一键注册定时任务（macOS launchd / Linux systemd·cron）
+gns install       # 一键注册定时任务（macOS launchd / Linux systemd·cron / Windows 任务计划）
 gns uninstall     # 卸载定时任务
 gns daemon        # 轻量 daemon（Windows 首选，timer 轮询多仓库）
 gns version
@@ -77,7 +77,15 @@ gns version
   ```
 
   日志走 `journalctl --user -u gns`（cron 模式在 `~/.local/state/git-notes-sync/`）；传统 crontab 手写方式：`*/5 * * * * cd ~/notes && gns sync`（cron 环境需完整：SSH agent、credential helper、PATH/HOME）。
-- **Windows**：`gns daemon`（内置 timer，默认 600s = 10min），配合任务计划程序开机自启；daemon 继承启动它的 shell 环境变量。
+- **Windows**：`gns install` 一键注册任务计划（`schtasks`，无需管理员）：
+
+  ```bash
+  gns install            # 任务计划每分钟触发 gns sync-all（最小 1 分钟）
+  gns install --daemon   # ONLOGON 启动常驻 daemon
+  gns uninstall          # 删除任务
+  ```
+
+  日志在 `%LOCALAPPDATA%\git-notes-sync\<label>.log`；查看：`schtasks /Query /TN com.git-notes-sync`。⚠️ 任务计划无 keep-alive，daemon 崩溃不会自动重启。传统方式：`gns daemon`（内置 timer，默认 600s），配合任务计划程序开机自启。
 
 ## 配置
 

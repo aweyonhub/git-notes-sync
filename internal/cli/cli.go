@@ -32,6 +32,7 @@ usage:
   gns resolve [flags]     list or resolve persisted conflict markers
   gns repos <cmd>         manage the repo list: list | add | del
   gns config <cmd>        inspect / edit config: list | get | set | unset
+  gns logs [flags]        show scheduler logs (launchd / systemd / Task Scheduler)
   gns install [flags]     install launchd (macOS) / systemd-cron (Linux) / Task Scheduler (Windows)
   gns uninstall [flags]   remove the registered service
   gns daemon [flags]      run the lightweight timer daemon
@@ -112,6 +113,8 @@ func Run(args []string) error {
 		return cmdConfig(rest)
 	case "daemon":
 		return cmdDaemon(rest)
+	case "logs":
+		return cmdLogs(rest)
 	case "install":
 		return cmdInstall(rest)
 	case "uninstall":
@@ -756,6 +759,7 @@ func cmdInstall(args []string) error {
 		fmt.Printf("  mode:  %s\n", modeDesc)
 		fmt.Printf("  logs:  %s.log\n", opts.LogDir+"/"+label)
 		fmt.Println("verify:  launchctl list | grep " + label)
+		fmt.Println("logs:    gns logs [-label " + label + "]")
 	case "linux":
 		fmt.Printf("installed gns scheduler %s\n", label)
 		fmt.Printf("  mode:  %s\n", modeDesc)
@@ -773,12 +777,14 @@ func cmdInstall(args []string) error {
 			fmt.Printf("  logs:    journalctl --user -u %s\n", label)
 		}
 		fmt.Println("verify:  systemctl --user list-timers | grep " + label)
+		fmt.Println("logs:    gns logs [-label " + label + "]")
 	case "windows":
 		fmt.Printf("installed gns scheduler %s\n", label)
 		fmt.Printf("  mode:  %s\n", modeDesc)
 		fmt.Printf("  task:  %s (Task Scheduler, no admin needed)\n", label)
 		fmt.Printf("  logs:  %s\\%s.log\n", opts.LogDir, label)
 		fmt.Println("verify:  schtasks /Query /TN \"" + label + "\"")
+		fmt.Println("logs:    gns logs [-label " + label + "]")
 		if daemonMode {
 			fmt.Println("  note: Task Scheduler has no keep-alive — a crash won't restart;")
 			fmt.Println("        the task runs once per logon, keep `gns daemon` alive via other means")

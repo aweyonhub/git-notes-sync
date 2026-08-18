@@ -89,8 +89,9 @@ git remote set-url origin https://<PAT>@github.com/you/notes.git
 gns uninstall            # macOS：bootout + 删 ~/Library/LaunchAgents/<label>.plist
                          # Linux：systemctl --user disable + 删 unit 文件 / 剥离 crontab 块
 
-# ② 卸载二进制
-npm uninstall -g git-notes-sync                  # npm 安装方式
+# ② 卸载二进制（按安装来源选一条）
+npm uninstall -g @aweyonhub/git-notes-sync       # registry 安装（平台分包）
+npm uninstall -g git-notes-sync                  # github 直装（方案①下载器）
 # 或手动构建：make clean（删除 ./gns 与 dist/）
 ```
 
@@ -105,6 +106,8 @@ rm ~/Library/Logs/com.git-notes-sync*.log
 systemctl --user disable --now com.git-notes-sync.timer com.git-notes-sync.service
 rm ~/.config/systemd/user/com.git-notes-sync.*
 # Linux（crontab）：crontab -e 手动删除两行托管标记之间的内容
+# Windows（任务计划）
+schtasks /Delete /TN com.git-notes-sync /F
 ```
 
 **卸载保留什么**：全局配置（`config.toml`）、笔记仓库、日志文件都**不会**被删除——重装后配置直接复用。想完全清除（可选）：
@@ -112,6 +115,7 @@ rm ~/.config/systemd/user/com.git-notes-sync.*
 ```bash
 rm -rf ~/Library/Application\ Support/git-notes-sync      # macOS 配置
 rm -rf ~/.config/git-notes-sync ~/.local/state/git-notes-sync   # Linux 配置/日志
+rm -rf "%LOCALAPPDATA%\git-notes-sync"                              # Windows 日志
 ```
 
 ---
@@ -241,6 +245,17 @@ gns config list -c my.toml         # 指定配置文件（默认全局配置）
 - `repos`（块）与 `conflict.text_extensions`（数组）不可用 `config set` 编辑——前者用 `gns repos add/del`，后者手编配置文件。
 - `set` 只做类型校验（bool/int/string）；业务约束（如 `sync_interval` 最小 5）在加载时生效。
 - daemon 会检测配置文件 mtime 变更自动热重载，`set` 后下一轮即生效。
+
+### `gns logs` — 查看调度器日志
+
+```bash
+gns logs                  # 最近 50 行（默认 label com.git-notes-sync）
+gns logs -n 200           # 更多行
+gns logs -f               # 跟随新输出
+gns logs -label <label>   # 其他 label
+```
+
+日志来源：macOS `~/Library/Logs/<label>.log`；Linux cron `~/.local/state/git-notes-sync/<label>.log`（systemd 模式自动走 `journalctl --user -u <label>`）；Windows `%LOCALAPPDATA%\git-notes-sync\<label>.log`。
 
 ### `gns daemon` — 轻量常驻（Windows 首选）
 
@@ -582,7 +597,7 @@ gns resolve --ai        # AI 语义合并（建议人工复核）
 | AI 未生效 | 检查 `commit_message = "ai"`、`[ai] type` 已配置、`api_key_env` 指向的环境变量已导出 |
 | `commit` 报 "Please tell me who you are" | 未配置 git 身份：`git config --global user.name/email` |
 | 与 Obsidian Git 插件冲突？ | 不冲突。本工具在系统层操作 Git，不介入编辑器进程，可共存或互补 |
-| 卸载 npm 包前要做什么？ | **先 `gns uninstall` 再 `npm uninstall -g git-notes-sync`**。launchd/systemd 注册指向 npm 包内二进制，直接删包会留下"僵尸"定时任务（每轮报错；daemon 模式反复拉起失败），且二进制没了无法再用 `gns uninstall` 清理，只能手动 `launchctl bootout gui/$(id -u)/com.git-notes-sync` + 删 `~/Library/LaunchAgents/com.git-notes-sync.plist` |
+| 卸载 npm 包前要做什么？ | **先 `gns uninstall` 再按安装来源卸载**（registry 装的 `npm uninstall -g @aweyonhub/git-notes-sync`；github 直装的 `npm uninstall -g git-notes-sync`）。launchd/systemd 注册指向 npm 包内二进制，直接删包会留下"僵尸"定时任务（每轮报错；daemon 模式反复拉起失败），且二进制没了无法再用 `gns uninstall` 清理，只能手动 `launchctl bootout gui/$(id -u)/com.git-notes-sync` + 删 `~/Library/LaunchAgents/com.git-notes-sync.plist` |
 | daemon 里 push 失败但终端成功 | 环境变量问题（SSH agent / credential helper / PATH），见「5. 环境注意事项」 |
 | 同步间隔多长合适 | 笔记场景 60s~10min 均可（默认 10min）；文件多/仓库大时可调大 `sync_interval` 或 cron 间隔 |
 

@@ -80,6 +80,31 @@ func DefaultLogDir(home string) string {
 	return filepath.Join(home, ".local", "state", "git-notes-sync")
 }
 
+// LogPath returns the log file for cron mode; systemd mode has no file
+// (output goes to the user journal — `gns logs` uses journalctl there).
+// Returns "" when the file does not exist.
+func LogPath(label string) string {
+	home, _ := os.UserHomeDir()
+	p := filepath.Join(home, ".local", "state", "git-notes-sync", label+".log")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
+}
+
+// SystemdUnitExists reports whether a systemd user unit file exists on disk
+// for the given label (either .service or .timer).
+func SystemdUnitExists(label string) bool {
+	home, _ := os.UserHomeDir()
+	base := filepath.Join(home, ".config", "systemd", "user", label)
+	for _, kind := range []string{".service", ".timer"} {
+		if _, err := os.Stat(base + kind); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // --- systemd backend ---
 
 func installSystemd(o LaunchOptions) error {

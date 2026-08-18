@@ -22,6 +22,14 @@ import (
 	"strings"
 )
 
+// LogPath returns the Task Scheduler task log file path.
+func LogPath(label string) string {
+	return filepath.Join(DefaultLogDir(""), label+".log")
+}
+
+// SystemdUnitExists always returns false on Windows.
+func SystemdUnitExists(label string) bool { return false }
+
 // schtasks runs schtasks.exe with args, mapping failure to a descriptive
 // error. Task Scheduler output is localized (GBK on zh-CN), so success/failure
 // is judged by the exit code, never by parsing output.

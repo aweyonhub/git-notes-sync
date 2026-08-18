@@ -14,7 +14,7 @@ func TestTaskCommandInterval(t *testing.T) {
 		LogDir:   `C:\Users\me\AppData\Local\git-notes-sync`,
 	}
 	cmd := taskCommand(o)
-	want := `cmd /c "C:\Program Files\git-notes-sync\gns.exe" sync-all >> "C:\Users\me\AppData\Local\git-notes-sync\com.git-notes-sync.log" 2>&1`
+	want := `cmd /c ""C:\Program Files\git-notes-sync\gns.exe" sync-all >> "C:\Users\me\AppData\Local\git-notes-sync\com.git-notes-sync.log" 2>&1"`
 	if cmd != want {
 		t.Errorf("taskCommand interval:\n got: %s\nwant: %s", cmd, want)
 	}
@@ -29,7 +29,7 @@ func TestTaskCommandDaemon(t *testing.T) {
 		LogDir: `C:\Users\me\AppData\Local\git-notes-sync`,
 	}
 	cmd := taskCommand(o)
-	want := `cmd /c "C:\gns.exe" daemon -c "C:\Users\me\.config\git-notes-sync\config.toml" >> "C:\Users\me\AppData\Local\git-notes-sync\com.git-notes-sync.log" 2>&1`
+	want := `cmd /c ""C:\gns.exe" daemon -c "C:\Users\me\.config\git-notes-sync\config.toml" >> "C:\Users\me\AppData\Local\git-notes-sync\com.git-notes-sync.log" 2>&1"`
 	if cmd != want {
 		t.Errorf("taskCommand daemon:\n got: %s\nwant: %s", cmd, want)
 	}
@@ -45,7 +45,7 @@ func TestTaskCreateArgs(t *testing.T) {
 	}
 	args := taskCreateArgs(o)
 	want := []string{"/Create", "/TN", "com.git-notes-sync", "/TR",
-		`cmd /c "C:\gns.exe" sync-all >> "C:\Users\me\AppData\Local\git-notes-sync\com.git-notes-sync.log" 2>&1`,
+		`cmd /c ""C:\gns.exe" sync-all >> "C:\Users\me\AppData\Local\git-notes-sync\com.git-notes-sync.log" 2>&1"`,
 		"/F", "/SC", "MINUTE", "/MO", "1"}
 	if len(args) != len(want) {
 		t.Fatalf("arg count: got %d want %d (%v)", len(args), len(want), args)

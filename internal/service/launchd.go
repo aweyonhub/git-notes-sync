@@ -104,6 +104,15 @@ func DefaultLogDir(home string) string {
 	return filepath.Join(home, "Library", "Logs")
 }
 
+// LogPath returns the launchd agent log file path.
+func LogPath(label string) string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library", "Logs", label+".log")
+}
+
+// SystemdUnitExists always returns false on macOS.
+func SystemdUnitExists(label string) bool { return false }
+
 // Loaded reports whether the agent is registered (for `install --status`).
 func Loaded(o LaunchOptions) bool {
 	return isLoaded(o.Label)

@@ -105,6 +105,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -121,11 +122,46 @@ jobs:
       - name: Publish sub-packages to npm
         run: |
           for pkg in packages/cli-*; do
-            (cd "$pkg" && npm publish --access public)
+            name=$(node -p "require('./$pkg/package.json').name")
+            ver=$(node -p "require('./$pkg/package.json').version")
+            if npm view "$name@$ver" version >/dev/null 2>&1; then
+              echo "skip $name@$ver (already published)"
+            else
+              for attempt in 1 2 3; do
+                if (cd "$pkg" && npm publish --access public); then
+                  break
+                fi
+                if [ $attempt -lt 3 ]; then
+                  echo "retry $name@$ver in 10s (attempt $attempt/3)..."
+                  sleep 10
+                else
+                  echo "failed to publish $name@$ver after 3 attempts"
+                  exit 1
+                fi
+              done
+              sleep 5
+            fi
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish meta package to npm
-        run: (cd packages/meta && npm publish --access public)
+        run: |
+          ver=$(node -p "require('./packages/meta/package.json').version")
+          if npm view "@aweyonhub/git-notes-sync@$ver" version >/dev/null 2>&1; then
+            echo "skip @aweyonhub/git-notes-sync@$ver (already published)"
+          else
+            for attempt in 1 2 3; do
+              if (cd packages/meta && npm publish --access public); then
+                break
+              fi
+              if [ $attempt -lt 3 ]; then
+                echo "retry meta in 10s (attempt $attempt/3)..."
+                sleep 10
+              else
+                echo "failed to publish meta after 3 attempts"
+                exit 1
+              fi
+            done
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
