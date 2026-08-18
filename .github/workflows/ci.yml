@@ -26,7 +26,7 @@ jobs:
     # STOPGAP: verify the platform-split install chain locally (sub-package tgz
     # + meta tgz) without the npm registry — sub-packages aren't published yet.
     # TODO: once published, switch this to the real e2e:
-    #   npm install -g git-notes-sync && gns --version
+    #   npm install -g @aweyonhub/git-notes-sync && gns --version
     # (that covers registry resolution for all platforms).
     # Tag runs skip this job: it races the publish job (assets get deleted and
     # re-uploaded → download 404 window); plain pushes are stable.
@@ -57,9 +57,9 @@ jobs:
           # sub-pkg tgz matching git-notes-sync-*.tgz (scoped @ flattens to -).
           mkdir -p /tmp/pkgs/sub /tmp/pkgs/meta
           (cd packages/cli-linux-x64 && npm pack --pack-destination /tmp/pkgs/sub)
-          npm pack --pack-destination /tmp/pkgs/meta
-          npm install -g /tmp/pkgs/sub/git-notes-sync-*.tgz
-          npm install -g /tmp/pkgs/meta/git-notes-sync-*.tgz
+          (cd packages/meta && npm pack --pack-destination /tmp/pkgs/meta)
+          npm install -g /tmp/pkgs/sub/*git-notes-sync-*.tgz
+          npm install -g /tmp/pkgs/meta/*git-notes-sync-*.tgz
           gns --version
           gns help | head -3
           npm ls -g --depth=0 | grep git-notes-sync
@@ -101,6 +101,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -112,3 +116,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+      - name: Assemble npm platform sub-packages
+        run: scripts/assemble-platform-packages.sh "${GITHUB_REF_NAME#v}" dist
+      - name: Publish sub-packages to npm
+        run: |
+          for pkg in packages/cli-*; do
+            (cd "$pkg" && npm publish --access public)
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish meta package to npm
+        run: (cd packages/meta && npm publish --access public)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

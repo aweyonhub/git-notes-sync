@@ -1,5 +1,5 @@
 {
-  "name": "@git-notes-sync/cli-linux-arm64",
+  "name": "@aweyonhub/git-notes-sync-linux-arm64",
   "version": "0.1.2",
   "description": "git-notes-sync native binary for linux/arm64",
   "os": [

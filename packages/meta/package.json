@@ -1,0 +1,35 @@
+{
+  "name": "@aweyonhub/git-notes-sync",
+  "version": "0.1.2",
+  "description": "Auto-sync for notes-style git workspaces: commit → fetch → merge → push, conflict-tolerant, AI-enhanced commit messages (gns)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aweyonhub/git-notes-sync.git"
+  },
+  "homepage": "https://github.com/aweyonhub/git-notes-sync",
+  "bugs": {
+    "url": "https://github.com/aweyonhub/git-notes-sync/issues"
+  },
+  "bin": {
+    "gns": "bin/gns.js",
+    "notes-sync": "bin/gns.js"
+  },
+  "scripts": {},
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "optionalDependencies": {
+    "@aweyonhub/git-notes-sync-linux-x64": "0.1.2",
+    "@aweyonhub/git-notes-sync-linux-arm64": "0.1.2",
+    "@aweyonhub/git-notes-sync-darwin-x64": "0.1.2",
+    "@aweyonhub/git-notes-sync-darwin-arm64": "0.1.2",
+    "@aweyonhub/git-notes-sync-win32-x64": "0.1.2",
+    "@aweyonhub/git-notes-sync-win32-arm64": "0.1.2"
+  },
+  "engines": {
+    "node": ">=16",
+    "npm": ">=7"
+  }
+}

@@ -9,22 +9,16 @@
     "url": "https://github.com/aweyonhub/git-notes-sync/issues"
   },
   "bin": {
-    "gns": "bin/gns.js",
-    "notes-sync": "bin/gns.js"
+    "gns": "npm/bin/gns.js",
+    "notes-sync": "npm/bin/gns.js"
   },
-  "scripts": {},
+  "scripts": {
+    "postinstall": "node npm/scripts/install.js"
+  },
   "files": [
-    "bin",
+    "npm",
     "README.md"
   ],
-  "optionalDependencies": {
-    "@git-notes-sync/cli-linux-x64": "0.1.2",
-    "@git-notes-sync/cli-linux-arm64": "0.1.2",
-    "@git-notes-sync/cli-darwin-x64": "0.1.2",
-    "@git-notes-sync/cli-darwin-arm64": "0.1.2",
-    "@git-notes-sync/cli-win32-x64": "0.1.2",
-    "@git-notes-sync/cli-win32-arm64": "0.1.2"
-  },
   "engines": {
     "node": ">=16",
     "npm": ">=7"

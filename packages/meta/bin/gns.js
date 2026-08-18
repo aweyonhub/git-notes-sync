@@ -2,7 +2,7 @@
 // git-notes-sync platform shim (npm registry distribution).
 //
 // The meta package has no binary and no install scripts. The platform
-// sub-package (@git-notes-sync/cli-<os>-<arch>) carries the native binary
+// sub-package (@aweyonhub/git-notes-sync-<os>-<arch>) carries the native binary
 // and is pulled automatically by npm via optionalDependencies + os/cpu
 // filtering. This shim locates it and spawns it.
 
@@ -30,15 +30,15 @@ function platform() {
 
 let binPath;
 try {
-  const pkg = '@git-notes-sync/cli-' + platform();
+  const pkg = '@aweyonhub/git-notes-sync-' + platform();
   binPath = require.resolve(pkg + '/bin/gns' + (process.platform === 'win32' ? '.exe' : ''));
 } catch (e) {
   console.error(
     'gns: native binary not found. The platform package did not install.\n' +
-    '  Reinstall with: npm install -g git-notes-sync (registry) or\n' +
-    '  npm install -g --install-links=true github:aweyonhub/git-notes-sync\n' +
+    '  Reinstall with: npm install -g @aweyonhub/git-notes-sync (registry) or\n' +
+    '  npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync\n' +
     '  (do NOT pass --no-optional — that disables the platform binary;\n' +
-    '  verify with: npm ls @git-notes-sync/cli-' + platform() + ' -g)\n'
+    '  verify with: npm ls @aweyonhub/git-notes-sync-' + platform() + ' -g)\n'
   );
   process.exit(1);
 }

@@ -1,5 +1,5 @@
 {
-  "name": "@git-notes-sync/cli-win32-x64",
+  "name": "@aweyonhub/git-notes-sync-win32-x64",
   "version": "0.1.2",
   "description": "git-notes-sync native binary for win32/x64",
   "os": [

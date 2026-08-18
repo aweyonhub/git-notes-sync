@@ -9,7 +9,7 @@
 
 ### 方式一：npm（推荐，无需 Go 环境）
 
-postinstall 按平台从 GitHub Releases 下载对应二进制（`gns-<platform>-<arch>[.exe]`），自动跟随重定向、校验 SHA-256（Release 的 `checksums.txt`）、验证 `--version` 后落盘。安装后提供两个等价命令：
+**双源独立分发**：方式一（npm registry）走平台分包——主包（`packages/meta/`）无任何 install 脚本，npm 按当前 os/cpu 自动安装对应平台子包（`@aweyonhub/git-notes-sync-<os>-<arch>`，内含原生二进制）；方式二（GitHub 直装）走仓库根结构——postinstall 下载器从 GitHub Releases 下载二进制，自包含、不依赖 npm registry 发布。安装后提供两个等价命令：
 
 ```bash
 gns --version        # 或 notes-sync --version
@@ -19,17 +19,19 @@ gns --version        # 或 notes-sync --version
 
 ```bash
 # 方式一：npm registry（平台分包，零 flag；主包无 install 脚本不触发 allow-scripts）
-npm install -g git-notes-sync
+npm install -g @aweyonhub/git-notes-sync
 
-# 方式二：GitHub 直装（同架构；无需 --allow-scripts/--foreground-scripts，仅需 --install-links=true）
-npm install -g --install-links=true github:aweyonhub/git-notes-sync
+# 方式二：GitHub 直装（走 main 分支方案①：postinstall 下载器，三 flag 必需）
+npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
 # 开发版（临时开发分支，如 <branch>）
-npm install -g --install-links=true github:aweyonhub/git-notes-sync#<branch>
+npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#<branch>
 ```
 
 > 版本对应关系：包 `package.json` 的 version = git tag = GitHub Release = 下载器拉取的资产版本；`#<branch>` 分支若 package.json 版本未变，下载的仍是当前 Release 的二进制（测试安装链路 OK，测试新二进制需先发对应版本或本地构建）。
 
-**npm 11+ 默认拦截 install 脚本**（allow-scripts 安全机制），首次安装需放行（不同 npm 小版本的提示不同，任选其一）：
+**以下仅适用于方式二（GitHub 直装 main）**——其 postinstall 执行仓库根 `npm/scripts/install.js`（下载器：按 `gns-<platform>-<arch>[.exe]` 从 GitHub Releases 下载、SHA-256 校验、版本验证后落盘），该链路**完全不依赖 npm registry 发布**（子包未发布也能用）；方式一 registry 安装无任何 install 脚本，不需要这些 flag，也不访问 GitHub Releases。
+
+npm 11+ 默认拦截 install 脚本（allow-scripts 安全机制），首次安装需放行（不同 npm 小版本的提示不同，任选其一）：
 
 ```bash
 # 方式一：安装时放行（推荐，配合 --install-links=true）
@@ -57,7 +59,7 @@ npm approve-scripts git-notes-sync
 
 ```bash
 make build            # 生成 ./gns
-make cross            # 交叉编译全部 5 平台到 dist/
+make cross            # 交叉编译 6 平台到 dist/
 ```
 
 ### 前置要求

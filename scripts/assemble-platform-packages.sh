@@ -28,6 +28,7 @@ for t in "${TRIPLETS[@]}"; do
   [ -f "$pkg/package.json" ] || { echo "missing $pkg/package.json"; exit 1; }
   mkdir -p "$pkg/bin"
   cp "$bin" "$pkg/bin/gns$ext"
+  chmod +x "$pkg/bin/gns$ext"   # npm pack preserves source mode; 644 breaks exec
   # version sync only — metadata (name/os/cpu/files) is maintained in git
   node -e '
     const fs = require("fs");
@@ -39,15 +40,20 @@ for t in "${TRIPLETS[@]}"; do
   echo "assembled $pkg (v$VERSION)"
 done
 
-# sync meta package: version + optionalDependencies
+# sync versions: root (github-install source, version only) + packages/meta
+# (registry meta, version + optionalDependencies) — single VERSION input
 node -e '
   const fs = require("fs");
   const v = process.argv[1];
-  const j = JSON.parse(fs.readFileSync("package.json", "utf8"));
-  j.version = v;
-  for (const k of Object.keys(j.optionalDependencies || {})) {
-    j.optionalDependencies[k] = v;
-  }
-  fs.writeFileSync("package.json", JSON.stringify(j, null, 2) + "\n");
+  const sync = (p) => {
+    const j = JSON.parse(fs.readFileSync(p, "utf8"));
+    j.version = v;
+    for (const k of Object.keys(j.optionalDependencies || {})) {
+      j.optionalDependencies[k] = v;
+    }
+    fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
+  };
+  sync("package.json");
+  sync("packages/meta/package.json");
 ' "$VERSION"
-echo "meta package synced (v$VERSION)"
+echo "root + meta versions synced (v$VERSION)"

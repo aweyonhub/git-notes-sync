@@ -258,13 +258,13 @@ gns daemon       # 启动轻量 daemon（可选，Windows 首选）
 **分发方式**：通过 npm 直接从 GitHub 仓库安装 Go 二进制，用户无需手动编译，也不依赖 npm 仓库发布。
 
 ```bash
-npm install -g github:aweyonhub/git-notes-sync
+npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
 ```
 
 **实现机制**（当前：方案③平台分包；演进历史见 doc/STATUS.md「npm 分发方案踩坑记录」）：
 
 1. **交叉编译**：Go 交叉编译 6 平台二进制（windows/amd64+arm64、darwin/amd64+arm64、linux/amd64+arm64），GitHub Actions 打 tag 时自动构建并发布到 GitHub Releases（含 `checksums.txt`），同时为 npm 子包提供二进制来源。
-2. **平台分包**：meta 包（仓库根 package.json）**无任何 install 脚本**（不触发 allow-scripts），`bin` 指向 `bin/gns.js`（Node shim，`require.resolve` 定位平台子包并 spawn）；`optionalDependencies` 锁版本声明 6 个 `@git-notes-sync/cli-<os>-<arch>` 子包，子包带 `os`/`cpu` 字段，npm 按平台自动安装对应子包。
+2. **平台分包（registry 主包）**：`packages/meta/package.json`（与 github 直装用的仓库根 package.json 分离）**无任何 install 脚本**（不触发 allow-scripts），`bin` 指向 `bin/gns.js`（Node shim，`require.resolve` 定位平台子包并 spawn）；`optionalDependencies` 锁版本声明 6 个 `@aweyonhub/git-notes-sync-<os>-<arch>` 子包，子包带 `os`/`cpu` 字段，npm 按平台自动安装对应子包。
 3. **发布流程**：`make cross` → `scripts/assemble-platform-packages.sh <version>`（单点版本同步）→ 先 6 子包后主包 `npm publish --access public`；子包未发布前 `github:` 直装会缺二进制（shim 给出提示）。
 4. **curl 直装 fallback**：`npm/scripts/install.js`（方案①下载器，302 跟随/SHA-256 校验/代理/镜像）保留，供不经过 npm 的安装脚本使用。
 

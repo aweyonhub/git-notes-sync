@@ -11,7 +11,7 @@ Go 实现，调用系统 Git，不重新实现 Git。详见 [doc/git-notes-sync.
 
 ### npm（推荐，免编译）
 
-**双源独立分发**：npm registry 走平台分包（主包 `packages/meta/` 无任何 install 脚本，二进制随平台子包 `@aweyonhub/git-notes-sync-<os>-<arch>` 自动安装）；GitHub 直装走仓库根（方案① postinstall 下载器，从 GitHub Releases 下载，自包含不依赖 registry）。提供 `gns`（主命令）/ `notes-sync`（别名）。
+平台分包：主包无任何 install 脚本（不触发 allow-scripts），原生二进制随平台子包 `@aweyonhub/git-notes-sync-<os>-<arch>` 自动安装（npm 按 os/cpu 过滤 optionalDependencies）。提供 `gns`（主命令）/ `notes-sync`（别名）。
 
 ```bash
 # 方式一：npm registry（子包发布后可用，零 flag）
@@ -24,8 +24,6 @@ npm install -g --install-links=true --foreground-scripts --allow-scripts=git-not
 ```
 
 > **三个 flag 只适用于方式二**（github 直装拉取的是 main 分支，其 postinstall 下载器从 GitHub Releases 下载二进制）：`--install-links=true` 强制复制解包（npm 对 git 依赖默认符号链接到 cacache 临时目录，被清后包失效）；`--allow-scripts=git-notes-sync` 放行 postinstall（npm 11+ 默认拦截）；`--foreground-scripts` 前台执行脚本避免 reify 竞态。方式一 registry 安装无任何脚本、零 flag。
->
-> **两条链路完全独立、互不依赖**：方式一（registry）二进制在子包内，安装零脚本、不访问 GitHub Releases；方式二（github 直装）由仓库根 package.json 的 `postinstall` 执行 `npm/scripts/install.js`（下载器：302 跟随 / SHA-256 校验 / 代理 / 版本覆盖），从 GitHub Releases 下载二进制——**不需要 registry 上的任何包**，子包是否发布不影响本方式。
 
 ### 手动构建
 
