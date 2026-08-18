@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -42,6 +44,34 @@ func TestLogStamp(t *testing.T) {
 	}
 	if _, err := time.Parse("2006-01-02 15:04:05", strings.TrimSpace(s)); err != nil {
 		t.Fatalf("logStamp() = %q not parseable: %v", s, err)
+	}
+}
+
+func TestResolveInterval(t *testing.T) {
+	// explicit -interval wins over anything
+	if got := resolveInterval(120, "/nonexistent/x.toml"); got != 120 {
+		t.Errorf("explicit interval: got %d", got)
+	}
+
+	// unreadable config → 600s default
+	if got := resolveInterval(0, "/nonexistent/x.toml"); got != 600 {
+		t.Errorf("fallback default: got %d", got)
+	}
+
+	// config sync_interval wins when no explicit flag
+	dir := t.TempDir()
+	p := filepath.Join(dir, "c.toml")
+	if err := os.WriteFile(p, []byte("sync_interval = 45\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveInterval(0, p); got != 45 {
+		t.Errorf("config sync_interval: got %d", got)
+	}
+
+	// empty cfgPath resolves via the global config (GNS_CONFIG override)
+	t.Setenv("GNS_CONFIG", p)
+	if got := resolveInterval(0, ""); got != 45 {
+		t.Errorf("global config via GNS_CONFIG: got %d", got)
 	}
 }
 

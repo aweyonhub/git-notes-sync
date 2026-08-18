@@ -206,7 +206,7 @@ func TestPreflightTCCPaths(t *testing.T) {
 			}
 			continue
 		}
-		if !hasWarn(warns, "~"+string(os.PathSeparator)+c.want) {
+		if !hasWarn(warns, "~/"+c.want) {
 			t.Errorf("%s: expected TCC warning for %s, got %v", c.path, c.want, warns)
 		}
 	}

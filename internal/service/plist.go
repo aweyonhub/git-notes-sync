@@ -9,7 +9,6 @@ package service
 import (
 	"encoding/xml"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -30,16 +29,30 @@ const (
 	ModeDaemon
 )
 
+// Backend selects the scheduling backend on Linux (ignored on macOS).
+type Backend int
+
+const (
+	// BackendAuto: default — systemd user units on Linux (timer for interval
+	// mode, service for daemon mode).
+	BackendAuto Backend = iota
+	// BackendSystemd: explicitly use systemd user units.
+	BackendSystemd
+	// BackendCron: manage a block in the user's crontab instead.
+	BackendCron
+)
+
 // LaunchOptions describes a macOS LaunchAgent to install.
 type LaunchOptions struct {
-	Label    string // launchd label, e.g. com.git-notes-sync
+	Label    string // launchd label / systemd unit name, e.g. com.git-notes-sync
 	Exe      string // absolute path of the program launchd will run
 	Mode     Mode
-	Interval int    // seconds, ModeInterval only
-	Config   string // global config path, ModeDaemon only (passed as -c)
-	Home     string // HOME for the agent environment
-	LogDir   string // where stdout/stderr logs go (e.g. ~/Library/Logs)
-	Force    bool   // overwrite an existing plist
+	Backend  Backend // Linux only: systemd (default) or crontab
+	Interval int     // seconds, ModeInterval only
+	Config   string  // global config path, ModeDaemon only (passed as -c)
+	Home     string  // HOME for the agent environment
+	LogDir   string  // where stdout/stderr logs go (e.g. ~/Library/Logs)
+	Force    bool    // overwrite an existing plist
 }
 
 // PlistPath returns the absolute LaunchAgent plist path.
@@ -175,13 +188,12 @@ func homeDir(home string) string {
 func Preflight(home string, repoPaths []string) []string {
 	var warns []string
 
-	// 1. HTTPS credential persistence: launchd has no terminal, so interactive
-	// auth can never succeed. Check git's credential helper at any scope
-	// (system / global / local).
+	// 1. HTTPS credential persistence: background services (launchd/systemd/
+	// cron) have no terminal, so interactive auth can never succeed.
 	helper := gitCredentialHelper()
 	switch {
 	case helper == "":
-		warns = append(warns, "warn: git credential.helper is not configured — launchd has no terminal and HTTPS push would fail. Run: git config --global credential.helper store, then `git push` once to save credentials")
+		warns = append(warns, "warn: git credential.helper is not configured — background services have no terminal and HTTPS push would fail. Run: git config --global credential.helper store, then `git push` once to save credentials")
 	case strings.Contains(helper, "osxkeychain"):
 		warns = append(warns, "note: credential helper is osxkeychain — the first launchd run may pop a Keychain authorization dialog; click \"Always Allow\"")
 	case strings.Contains(helper, "store"):
@@ -214,9 +226,10 @@ func tccProtectedDir(path, home string) string {
 	if home == "" {
 		return ""
 	}
+	p := filepath.ToSlash(path)
 	for _, d := range []string{"Desktop", "Documents", "Downloads"} {
-		base := filepath.Join(home, d)
-		if path == base || strings.HasPrefix(path, base+string(os.PathSeparator)) {
+		base := filepath.ToSlash(filepath.Join(home, d))
+		if p == base || strings.HasPrefix(p, base+"/") {
 			return d
 		}
 	}

@@ -88,19 +88,12 @@ path = "~/notes"
 
 func TestExpandPath(t *testing.T) {
 	home, _ := os.UserHomeDir()
-	// "/abs/p" is absolute on Unix but not on Windows (no drive letter);
-	// expandPath resolves it against the current drive there. Mirror that
-	// so the expected value follows the platform's filepath semantics.
-	absP := "/abs/p"
-	if !filepath.IsAbs(absP) {
-		if a, err := filepath.Abs(absP); err == nil {
-			absP = a
-		}
-	}
+	// "/abs/p" starts with "/" — expandPath preserves it as-is on all
+	// platforms (no drive-letter conversion on Windows).
 	cases := map[string]string{
 		"~/notes":  filepath.Join(home, "notes"),
 		"~":        home,
-		"/abs/p":   absP,
+		"/abs/p":   "/abs/p",
 		"rel/path": mustAbs(t, "rel/path"),
 	}
 	for in, want := range cases {

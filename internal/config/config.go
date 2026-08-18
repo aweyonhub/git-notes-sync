@@ -162,9 +162,11 @@ func (r *Repos) Find(nameOrPath string) (Repo, bool) {
 
 // expandPath resolves ~/ and relative paths to absolute paths.
 func expandPath(p string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = ""
+	// Prefer $HOME over os.UserHomeDir(): consistent cross-platform behavior
+	// (Windows uses USERPROFILE for UserHomeDir, but tools expect $HOME for ~).
+	home := os.Getenv("HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
 	}
 	if p == "~" && home != "" {
 		return home
@@ -172,7 +174,7 @@ func expandPath(p string) string {
 	if strings.HasPrefix(p, "~/") && home != "" {
 		return filepath.Join(home, p[2:])
 	}
-	if !filepath.IsAbs(p) {
+	if !filepath.IsAbs(p) && !strings.HasPrefix(p, "/") {
 		if abs, err := filepath.Abs(p); err == nil {
 			return abs
 		}

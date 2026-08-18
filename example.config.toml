@@ -55,7 +55,7 @@ agent_file = "AGENTS.md"      # repo-relative agent instructions file, sent
                               # with the diff (default AGENTS.md; missing = ignored)
 
 # ---- daemon (global config only) ---------------------------------------
-sync_interval = 600           # seconds between ticks (default 600 = 10min)
+sync_interval = 600           # seconds between ticks (default 600 = 10min); also the default interval for `gns install` (explicit -interval wins)
 retry_attempts = 3            # fetch/push retries (exponential backoff)
 
 # 多仓库列表（daemon / gns sync-all 使用；两种写法等价）：

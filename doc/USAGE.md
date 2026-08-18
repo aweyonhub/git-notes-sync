@@ -78,6 +78,42 @@ git remote set-url origin https://<PAT>@github.com/you/notes.git
 
 > ⚠️ daemon / cron 运行时需保证 `HOME` 指向含凭据的目录（见 §5 环境注意事项）；PAT 建议只授予 `repo` 权限、定期轮换。
 
+### 1.1 卸载
+
+卸载分两层：**定时任务（agent）** 与 **二进制（npm 包 / 手动构建产物）**。
+
+**⚠️ 顺序很重要：先 `gns uninstall` 卸载 agent，再卸载二进制。** launchd/systemd 注册指向二进制路径，先删二进制会留下"僵尸"定时任务（interval 模式每轮报错；daemon 模式反复拉起失败），且此时 `gns uninstall` 已不可用，只能手动清理（见下）。
+
+```bash
+# ① 卸载定时任务（用当前二进制）
+gns uninstall            # macOS：bootout + 删 ~/Library/LaunchAgents/<label>.plist
+                         # Linux：systemctl --user disable + 删 unit 文件 / 剥离 crontab 块
+
+# ② 卸载二进制
+npm uninstall -g git-notes-sync                  # npm 安装方式
+# 或手动构建：make clean（删除 ./gns 与 dist/）
+```
+
+**顺序搞反了？手动清理**：
+
+```bash
+# macOS（npm 包已删、agent 变僵尸）
+launchctl bootout gui/$(id -u)/com.git-notes-sync
+rm ~/Library/LaunchAgents/com.git-notes-sync.plist
+rm ~/Library/Logs/com.git-notes-sync*.log
+# Linux（systemd）
+systemctl --user disable --now com.git-notes-sync.timer com.git-notes-sync.service
+rm ~/.config/systemd/user/com.git-notes-sync.*
+# Linux（crontab）：crontab -e 手动删除两行托管标记之间的内容
+```
+
+**卸载保留什么**：全局配置（`config.toml`）、笔记仓库、日志文件都**不会**被删除——重装后配置直接复用。想完全清除（可选）：
+
+```bash
+rm -rf ~/Library/Application\ Support/git-notes-sync      # macOS 配置
+rm -rf ~/.config/git-notes-sync ~/.local/state/git-notes-sync   # Linux 配置/日志
+```
+
 ---
 
 ## 2. 快速上手
@@ -216,17 +252,19 @@ gns daemon -c my.toml   # 指定全局配置
 
 daemon 只做两件事：内部 timer 周期触发同步、缓存配置（配置变更自动热重载）。不做 watcher、无状态持久化。输出走 stderr（launchd 下即 `<label>.err.log`），时间戳格式（`YYYY-MM-DD HH:MM:SS`）与 interval 模式日志一致。
 
-### `gns install` / `gns uninstall` — macOS 一键注册/卸载 launchd（开机自启）
+### `gns install` / `gns uninstall` — 一键注册/卸载定时任务（macOS launchd / Linux systemd·cron）
 
 ```bash
-gns install             # 默认：launchd 每 300s 触发一次 `gns sync-all`（无状态，进程跑完即退）
-gns install --daemon    # 常驻：KeepAlive 守护 `gns daemon`（节奏由配置 sync_interval 控制）
-gns install -interval 600    # 改触发间隔
+gns install             # macOS：launchd 按配置 sync_interval 触发一次 `gns sync-all`（无状态，进程跑完即退）
+                        # Linux：systemd timer（默认）或 crontab（--cron）
+gns install --daemon    # 常驻：macOS KeepAlive / Linux systemd Restart=always 守护 `gns daemon`
+                        #       （节奏由配置 sync_interval 控制；Linux 加 --cron 则用 @reboot）
+gns install -interval 600    # 改触发间隔（优先级：-interval > 配置 sync_interval > 默认 600s）
 # 其他 flag：-exe path（默认本二进制）、-label s（默认 com.git-notes-sync）、-force（覆盖已有）
-gns uninstall           # 停止并删除 LaunchAgent（-label 同 install）
+gns uninstall           # 停止并删除注册（macOS：bootout + 删 plist；Linux：disable + 删 unit / crontab 块）
 ```
 
-生成的 plist 位于 `~/Library/LaunchAgents/<label>.plist`，日志在 `~/Library/Logs/<label>.log(.err.log)`。plist 自动包含：
+**macOS（launchd）**：plist 位于 `~/Library/LaunchAgents/<label>.plist`，日志在 `~/Library/Logs/<label>.log(.err.log)`。plist 自动包含：
 
 - `EnvironmentVariables`：`PATH`（含 gns 所在目录，npm 装的 gns 是 node 启动器，launchd 需能解析 shebang）、`HOME`（凭据/SSH 依赖）
 - `StartInterval`（定时模式）或 `KeepAlive`（daemon 模式）+ `RunAtLoad`（装完立即跑一轮）
@@ -242,7 +280,9 @@ tail -f ~/Library/Logs/com.git-notes-sync.log        # 实时查看同步日志�
 gns uninstall                                        # 卸载 agent（只删 launchd 注册和 plist，不碰二进制/配置/仓库）
 ```
 
-> `gns install` 带 `-force` 时：直接覆盖已存在的 plist（先 bootout 旧注册再加载新的），用于切换模式（如 interval → daemon）或改参数；等价写法是 `gns uninstall && gns install ...`。
+> `gns install` 带 `-force` 时：直接覆盖已存在的注册（macOS 先 bootout 旧 plist 再加载新的；Linux 重写 unit 文件 / crontab 块），用于切换模式（如 interval → daemon）或改参数；等价写法是 `gns uninstall && gns install ...`。
+
+**Linux（systemd / cron）**：默认 systemd user units（`~/.config/systemd/user/<label>.{service,timer}`），日志走 journal（`journalctl --user -u <label>`）；`--cron` 切 crontab（托管标记块，日志重定向到 `~/.local/state/git-notes-sync/<label>.log`）。详见 §5 Linux 小节。
 
 ### `gns version` / `gns help`
 
@@ -348,49 +388,69 @@ max_diff_bytes = 51200
 
 ## 5. 定时调度
 
-### Linux — cron
+### Linux — `gns install`（systemd 默认，`--cron` 可切 crontab）
+
+**方式一（推荐）：systemd user units**
 
 ```bash
-crontab -e
-# 注意：cron 的 PATH 只有 /usr/bin:/bin，且环境变量极少。
-# 方案一（最稳）：写 gns 的绝对路径（npm 全局 bin 一般 /usr/local/bin）
-# 单仓库：每 5 分钟同步（cd 到仓库目录）
-*/5 * * * * cd /home/me/notes && /usr/local/bin/gns sync >> /tmp/gns-sync.log 2>&1
-# 多仓库：每 5 分钟同步配置中所有 repos（sync-all 无需 cd）
-*/5 * * * * /usr/local/bin/gns sync-all >> /tmp/gns-sync.log 2>&1
-
-# 方案二：先显式设置 PATH 再直接调命令（可含 SSH_AUTH_SOCK 等）
-PATH=/usr/local/bin:/usr/bin:/bin:/home/me/.npm-global/bin
-*/5 * * * * gns sync-all >> /tmp/gns-sync.log 2>&1
+gns install             # systemd timer：按配置 sync_interval 触发一次 gns sync-all（无状态）
+gns install --daemon    # systemd service 常驻（Restart=always，崩溃自动拉起；节奏 = 配置 sync_interval）
+gns install -interval 600    # 改触发间隔
+# 其他 flag：-exe path（默认本二进制）、-label s（默认 com.git-notes-sync）、-force（覆盖已有）
+gns uninstall           # disable + 删 unit 文件（~/.config/systemd/user/<label>.{service,timer}）
 ```
+
+生成两个 unit 文件：`<label>.service`（oneshot 跑 `gns sync-all`，或 daemon 模式 `Type=simple` + `Restart=always` 跑 `gns daemon -c <config>`）与 `<label>.timer`（`OnUnitActiveSec=<interval>s`，语义同 launchd StartInterval；interval 取 `-interval` > 配置 `sync_interval` > 默认 600s）。unit 内注入 `Environment=PATH/HOME`（npm 装的 gns 是 node 启动器，需解析 shebang）。
+
+- 日志：`journalctl --user -u <label>`（systemd 自动捕获 stdout/stderr）
+- 验证：`systemctl --user list-timers | grep <label>`；卸载：`gns uninstall`
+- 无 systemd 的发行版（Alpine 等）或 WSL 无 user session 时用方式二；headless 服务器建议 `loginctl enable-linger`（未登录也运行）
+
+**方式二：crontab（`--cron`）**
+
+```bash
+gns install --cron              # 按配置 sync_interval（默认 600s → */10）跑 gns sync-all
+gns install --daemon --cron     # @reboot 启动 gns daemon（cron 无常驻守护，崩溃不重启）
+gns uninstall                   # 移除 crontab 中的托管块
+```
+
+在 crontab 中维护一个标记块（`# >>> gns-sync managed by gns install` ... `# <<< gns-sync <<<`），只增删该块、保留其他条目；日志重定向到 `~/.local/state/git-notes-sync/<label>.log`。注意：cron 无秒级/任意周期能力，interval 换算规则为**向上取整**：≤59min → `*/N`（300s→`*/5`、90s→`*/2` 实际 120s）；≤23h → `0 */H`（7200s→每 2 小时）；≥24h → 每天 0 点。环境极简（凭据用 `credential.helper store` 或免密 SSH key）、crontab 读写存在并发竞态（与系统其他 crontab 工具同时编辑时）。
 
 ### macOS — launchd（推荐 `gns install` 一键，也可手写 plist）
 
 **方式一（推荐）：一键安装**
 
 ```bash
-gns install             # 每 300s 触发一次 gns sync-all，开机自启
+gns install             # 按配置 sync_interval（默认 600s）触发一次 gns sync-all，开机自启
 gns install --daemon    # 或常驻 daemon 模式（节奏 = 配置 sync_interval）
 gns uninstall           # 卸载
 ```
 
 **方式二：手写 plist**
 
-创建 `~/Library/LaunchAgents/com.git-notes-sync.plist`，核心配置：
+创建 `~/Library/LaunchAgents/com.git-notes-sync.plist`，核心配置（⚠️ 手写需自行补全 `EnvironmentVariables` 的 PATH/HOME——launchd 环境极简，这是最常见的"手写起不来"原因；一键安装已自动处理）：
 
 ```xml
-<key>StartInterval</key><integer>300</integer>
+<key>StartInterval</key><integer>300</integer>   <!-- 示例：300s，实际按配置 sync_interval -->
 <key>ProgramArguments</key>
 <array>
   <string>/usr/local/bin/gns</string>
   <!-- 单仓库：sync（配合 WorkingDirectory）；多仓库：sync-all（忽略目录） -->
   <string>sync-all</string>
 </array>
+<key>EnvironmentVariables</key>
+<dict>
+  <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin</string>
+  <key>HOME</key><string>/Users/me</string>
+</dict>
+<key>StandardOutPath</key><string>/tmp/gns-sync.log</string>
+<key>StandardErrorPath</key><string>/tmp/gns-sync.err.log</string>
 <key>WorkingDirectory</key><string>/Users/me</string>
 ```
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.git-notes-sync.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.git-notes-sync.plist   # 加载（旧命令 launchctl load 已废弃）
+launchctl bootout gui/$(id -u)/com.git-notes-sync                                   # 卸载
 ```
 
 ### Windows — daemon（首选）或任务计划程序
@@ -519,6 +579,7 @@ gns resolve --ai        # AI 语义合并（建议人工复核）
 | AI 未生效 | 检查 `commit_message = "ai"`、`[ai] type` 已配置、`api_key_env` 指向的环境变量已导出 |
 | `commit` 报 "Please tell me who you are" | 未配置 git 身份：`git config --global user.name/email` |
 | 与 Obsidian Git 插件冲突？ | 不冲突。本工具在系统层操作 Git，不介入编辑器进程，可共存或互补 |
+| 卸载 npm 包前要做什么？ | **先 `gns uninstall` 再 `npm uninstall -g git-notes-sync`**。launchd/systemd 注册指向 npm 包内二进制，直接删包会留下"僵尸"定时任务（每轮报错；daemon 模式反复拉起失败），且二进制没了无法再用 `gns uninstall` 清理，只能手动 `launchctl bootout gui/$(id -u)/com.git-notes-sync` + 删 `~/Library/LaunchAgents/com.git-notes-sync.plist` |
 | daemon 里 push 失败但终端成功 | 环境变量问题（SSH agent / credential helper / PATH），见「5. 环境注意事项」 |
 | 同步间隔多长合适 | 笔记场景 60s~10min 均可（默认 10min）；文件多/仓库大时可调大 `sync_interval` 或 cron 间隔 |
 

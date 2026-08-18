@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -71,12 +72,13 @@ commit flags:
 daemon flags:
   -once        run a single tick then exit
 
-install flags (macOS launchd LaunchAgent):
-  -interval N  tick every N seconds, running gns sync-all (default 300)
+install flags (macOS launchd / Linux systemd-cron):
+  -interval N  tick seconds for interval mode (default: config sync_interval, else 600)
   -daemon      resident mode: keep 'gns daemon' alive instead of interval ticks
                (cadence = config sync_interval)
+  -cron        Linux: use crontab instead of systemd user units
   -exe path    program to launch (default: this binary)
-  -label s     launchd label (default: com.git-notes-sync)
+  -label s     launchd label / systemd unit name (default: com.git-notes-sync)
   -force       overwrite an existing plist
 
 uninstall flags:
@@ -659,24 +661,40 @@ func parseKVArgs(args []string, flags map[string]*string) ([]string, error) {
 	return positional, nil
 }
 
-// cmdInstall registers a launchd LaunchAgent (macOS): either a stateless
-// StartInterval timer running `gns sync-all` (default) or a resident
+// resolveInterval returns the effective tick interval for interval mode:
+// an explicit -interval wins; otherwise the global config's sync_interval is
+// used; if the config cannot be read, fall back to the 600s default (the same
+// default as sync_interval).
+func resolveInterval(explicit int, cfgPath string) int {
+	if explicit > 0 {
+		return explicit
+	}
+	cfg, err := config.Load(cfgPath, "")
+	if err != nil {
+		return 600
+	}
+	return cfg.SyncInterval
+}
+
+// cmdInstall registers a launchd LaunchAgent / systemd unit / crontab block:
+// either a stateless timer running `gns sync-all` (default) or a resident
 // `gns daemon` kept alive (--daemon).
 func cmdInstall(args []string) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	var interval int
-	var daemonMode, force bool
+	var daemonMode, force, cronMode bool
 	var exe, label string
-	fs.IntVar(&interval, "interval", 300, "tick seconds (interval mode)")
+	fs.IntVar(&interval, "interval", 0, "tick seconds (interval mode; default: config sync_interval, else 600)")
 	fs.BoolVar(&daemonMode, "daemon", false, "resident daemon mode")
+	fs.BoolVar(&cronMode, "cron", false, "Linux: use crontab instead of systemd units")
 	fs.StringVar(&exe, "exe", "", "program to launch (default: this binary)")
-	fs.StringVar(&label, "label", "com.git-notes-sync", "launchd label")
+	fs.StringVar(&label, "label", "com.git-notes-sync", "launchd label / systemd unit name")
 	fs.BoolVar(&force, "force", false, "overwrite existing plist")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
-		return errors.New("usage: gns install [-interval N] [-daemon] [-exe path] [-label s] [-force]")
+		return errors.New("usage: gns install [-interval N] [-daemon] [-cron] [-exe path] [-label s] [-force]")
 	}
 
 	home, err := os.UserHomeDir()
@@ -699,10 +717,20 @@ func cmdInstall(args []string) error {
 		mode = service.ModeDaemon
 		cfgPath = config.GlobalPath()
 	}
+	// interval resolution: explicit -interval > global config sync_interval > 600s
+	interval = resolveInterval(interval, cfgPath)
+	backend := service.BackendAuto
+	if cronMode {
+		if runtime.GOOS != "linux" {
+			return errors.New("--cron is Linux-only (crontab backend); on macOS use the default launchd backend")
+		}
+		backend = service.BackendCron
+	}
 	opts := service.LaunchOptions{
 		Label:    label,
 		Exe:      exe,
 		Mode:     mode,
+		Backend:  backend,
 		Interval: interval,
 		Config:   cfgPath,
 		Home:     home,
@@ -720,11 +748,34 @@ func cmdInstall(args []string) error {
 	if daemonMode {
 		modeDesc = fmt.Sprintf("daemon: resident `gns daemon -c %s` (cadence = sync_interval config)", cfgPath)
 	}
-	fmt.Printf("installed launchd agent %s\n", label)
-	fmt.Printf("  plist: %s\n", opts.PlistPath())
-	fmt.Printf("  mode:  %s\n", modeDesc)
-	fmt.Printf("  logs:  %s.log\n", opts.LogDir+"/"+label)
-	fmt.Println("verify:  launchctl list | grep " + label)
+	// platform-aware summary: launchd on macOS, systemd/cron on Linux
+	switch runtime.GOOS {
+	case "darwin":
+		fmt.Printf("installed launchd agent %s\n", label)
+		fmt.Printf("  plist: %s\n", opts.PlistPath())
+		fmt.Printf("  mode:  %s\n", modeDesc)
+		fmt.Printf("  logs:  %s.log\n", opts.LogDir+"/"+label)
+		fmt.Println("verify:  launchctl list | grep " + label)
+	case "linux":
+		fmt.Printf("installed gns scheduler %s\n", label)
+		fmt.Printf("  mode:  %s\n", modeDesc)
+		if cronMode {
+			fmt.Println("  backend: crontab (managed marker block)")
+			fmt.Printf("  crontab: crontab -l | grep gns-sync\n")
+			fmt.Printf("  logs:    %s\n", opts.LogDir+"/"+label+".log")
+			if daemonMode {
+				fmt.Println("  note: cron @reboot has no keep-alive — a crash won't restart;")
+				fmt.Println("        systemd daemon mode (no --cron) uses Restart=always")
+			}
+		} else {
+			fmt.Println("  backend: systemd user units")
+			fmt.Printf("  units:   ~/.config/systemd/user/%s.{service,timer}\n", label)
+			fmt.Printf("  logs:    journalctl --user -u %s\n", label)
+		}
+		fmt.Println("verify:  systemctl --user list-timers | grep " + label)
+	default:
+		fmt.Printf("installed gns scheduler %s\n", label)
+	}
 	fmt.Println("remove:  gns uninstall")
 
 	// environment preflight: surface launchd-specific risks (credentials,
@@ -746,11 +797,12 @@ func cmdInstall(args []string) error {
 	return nil
 }
 
-// cmdUninstall stops and removes the launchd LaunchAgent.
+// cmdUninstall stops and removes the launchd LaunchAgent / systemd unit /
+// crontab block.
 func cmdUninstall(args []string) error {
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
 	var label string
-	fs.StringVar(&label, "label", "com.git-notes-sync", "launchd label")
+	fs.StringVar(&label, "label", "com.git-notes-sync", "launchd label / systemd unit name")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -766,9 +818,16 @@ func cmdUninstall(args []string) error {
 		return err
 	}
 	if service.Loaded(opts) {
-		fmt.Println("note: agent is still registered (launchctl may need a moment)")
+		fmt.Println("note: agent is still registered — check the platform output above")
 	}
-	fmt.Printf("uninstalled launchd agent %s\n", label)
+	switch runtime.GOOS {
+	case "darwin":
+		fmt.Printf("uninstalled launchd agent %s\n", label)
+	case "linux":
+		fmt.Printf("uninstalled gns scheduler %s (systemd units / crontab block removed)\n", label)
+	default:
+		fmt.Printf("uninstalled %s\n", label)
+	}
 	return nil
 }
 

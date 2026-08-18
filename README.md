@@ -48,8 +48,8 @@ gns config list|get|set|unset  # 查看与编辑配置
 gns resolve       # 列出已持久化的冲突 markers
 gns resolve --ours | --theirs   # 保留单侧，去 markers，提交并推送
 gns resolve --ai                # AI 语义合并（需配置 [ai]）
-gns install       # macOS：一键注册 launchd 定时任务（开机自启）
-gns uninstall     # macOS：卸载 launchd 定时任务
+gns install       # 一键注册定时任务（macOS launchd / Linux systemd·cron）
+gns uninstall     # 卸载定时任务
 gns daemon        # 轻量 daemon（Windows 首选，timer 轮询多仓库）
 gns version
 ```
@@ -59,7 +59,7 @@ gns version
 - **macOS**：`gns install` 一键注册 launchd LaunchAgent（开机自启）：
 
   ```bash
-  gns install            # 默认：每 300s 触发一次 gns sync-all（无状态）
+  gns install            # 默认：按配置 sync_interval 触发一次 gns sync-all（无状态）
   gns install --daemon   # 常驻 daemon 模式（KeepAlive，节奏 = 配置 sync_interval）
   gns install -interval 600    # 改触发间隔；-force 覆盖已有配置
   gns uninstall          # 卸载 agent（不影响二进制 / 配置 / 仓库）
@@ -67,7 +67,16 @@ gns version
 
   详细说明（plist 内容、日志、验证、凭据要求）见 [doc/USAGE.md](./doc/USAGE.md) §3/§5；也可手写 plist。
 
-- **Linux**：cron 无状态触发，建议 `*/5 * * * * cd ~/notes && gns sync`（cron 环境需完整：SSH agent、credential helper、PATH/HOME）。
+- **Linux**：`gns install` 一键注册（默认 systemd user units，`--cron` 切 crontab）：
+
+  ```bash
+  gns install            # systemd timer：按配置 sync_interval 跑一次 gns sync-all（无状态）
+  gns install --daemon   # systemd service 常驻（Restart=always，节奏 = 配置 sync_interval）
+  gns install --cron     # 改用 crontab（`*/5 * * * * gns sync-all`；--daemon 时用 @reboot）
+  gns uninstall          # 卸载（删除 unit 文件 / crontab 块，不影响二进制与配置）
+  ```
+
+  日志走 `journalctl --user -u gns`（cron 模式在 `~/.local/state/git-notes-sync/`）；传统 crontab 手写方式：`*/5 * * * * cd ~/notes && gns sync`（cron 环境需完整：SSH agent、credential helper、PATH/HOME）。
 - **Windows**：`gns daemon`（内置 timer，默认 600s = 10min），配合任务计划程序开机自启；daemon 继承启动它的 shell 环境变量。
 
 ## 配置
@@ -118,4 +127,4 @@ internal/
   cli/      命令分发
 ```
 
-发布：打 tag（如 `v0.1.1`）→ GitHub Actions 测试 + 交叉编译 6 平台 + 生成 `checksums.txt` → Release 资产；npm 侧经平台分包（meta 包 + 6 个 os/cpu 子包）发布到 npm registry（流程见 `doc/STATUS.md` §四）。
+发布：打 tag（如 `v0.1.1`）→ GitHub Actions 测试 + 交叉编译 6 平台 + 生成 `checksums.txt` → Release 资产；npm 侧经平台分包（meta 包 + 6 个 os/cpu 子包）发布到 npm registry（流程见 `doc/STATUS.md` §四）。开发在临时分支进行（如 `mac-launch`），验证后合并 main 发布。

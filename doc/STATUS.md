@@ -84,10 +84,10 @@
 | P1 | 真实 AI endpoint 冒烟 | 本地 Ollama 或任意 OpenAI-compatible 服务验证 `commit_message="ai"` 与 `resolve --ai` |
 | P1 | Windows 实机验证 | daemon 行为、credential helper / SSH 环境继承、autocrlf 场景 |
 | P2 | `gns resolve` 交互式模式 | 逐个文件选择 ours/theirs/AI（当前为全局 flag 一次性处理） |
-| P2 | cron 示例文档完善 | USAGE §5 已有 cron/launchd/Windows 三种示例，可补充 launchd plist 完整模板 |
-| P2 | `gns install` / `gns uninstall` 注册/管理系统服务 | ✅ **macOS 已落地（v0.1.3，分支 mac-launch）**：launchd LaunchAgent（`~/Library/LaunchAgents/com.git-notes-sync.plist`），支持定时模式（StartInterval + `gns sync-all`，默认 300s）与常驻模式（`--daemon` + KeepAlive）；自动注入 PATH/HOME 环境变量与日志路径；`uninstall` bootout + 删 plist；真机验证通过（含 launchd 环境下真实仓库 fetch/push）。待办：Linux systemd user unit（`~/.config/systemd/user/gns.service`）；Windows 任务计划程序（`schtasks /Create`，可选真服务需 nssm / x/sys/windows/svc） |
+| P2 | ~~cron 示例文档完善~~ | ✅ 已完成：USAGE §5 有 cron/launchd/Windows 三种示例 + launchd plist 完整模板 + `gns install` 一键注册 |
+| P2 | `gns install` / `gns uninstall` 注册/管理系统服务 | ✅ **macOS 已落地（v0.1.3，分支 mac-launch）**：launchd LaunchAgent（`~/Library/LaunchAgents/com.git-notes-sync.plist`），支持定时模式（StartInterval + `gns sync-all`，默认 300s）与常驻模式（`--daemon` + KeepAlive）；自动注入 PATH/HOME 环境变量与日志路径；`uninstall` bootout + 删 plist；真机验证通过（含 launchd 环境下真实仓库 fetch/push）。✅ **Linux 已落地（同分支）**：systemd user units（`~/.config/systemd/user/<label>.{service,timer}`，timer 默认 300s / daemon 模式 Restart=always）与 crontab 后端（`--cron`，托管标记块 + @reboot）；unit/cron 生成与 crontab 合并/剥离纯函数有单测，交叉编译通过，**待 Linux 真机验证**。待办：Windows 任务计划程序（`schtasks /Create`） |
 | P2 | 非 git 目录纳入统一 git 仓库管理 | 可配置多个非 git 目录（桌面/下载/配置目录等），定时增量复制到集中 git 仓库，由该仓库承担版本管理与远端同步。设计要点：配置 `[[sync]]` 映射（源目录 → 集中仓库内子路径）；复用 daemon timer 触发；增量检测（mtime+size 或内容 hash）避免全量拷贝；复制前先 pull 合并远端，复制后 commit + push（走现有同步链路）；删除策略默认不传播（源删除仅记录，防误删），可选 `delete = true`；集中仓库被多端修改时按现有冲突模型处理 |
-| P3 | 一键安装脚本 `install.sh`/`install.ps1` | 封装冗长命令（`--install-links=true --foreground-scripts --allow-scripts=git-notes-sync` 参数过多），用户只跑一条命令：检测平台 → 下载对应 tgz/二进制 + 校验 checksum → 安装/提示；也可考虑 curl 直装（不依赖 npm） |
+| P3 | 一键安装脚本 `install.sh`/`install.ps1` | 封装冗长命令（`--install-links=true --foreground-scripts --allow-scripts=git-notes-sync` 参数过多），用户只跑一条命令：检测平台 → 下载对应 tgz/二进制 + 校验 checksum → 安装/提示；也可考虑 curl 直装（不依赖 npm）。注：`gns install`（v0.1.3）已覆盖"注册定时任务"侧的一键化 |
 | P3 | 可选：GoReleaser 替代手写 Actions | 多平台发布更成熟（changelog/Homebrew 等）；checksums 已实现（CI 生成 `checksums.txt`），当前 6 平台手写够用 |
 | P3 | 可选：shell 补全 | `gns completion bash\|zsh\|fish`，npm 生态用户偏好 |
 
