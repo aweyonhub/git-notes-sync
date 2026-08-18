@@ -23,8 +23,11 @@ jobs:
         run: go vet ./...
 
   npm-install:
-    # end-to-end check of the npm distribution with the real user command
-    # (--install-links=true copies instead of symlinking git deps).
+    # STOPGAP: verify the platform-split install chain locally (sub-package tgz
+    # + meta tgz) without the npm registry — sub-packages aren't published yet.
+    # TODO: once published, switch this to the real e2e:
+    #   npm install -g git-notes-sync && gns --version
+    # (that covers registry resolution for all platforms).
     # Tag runs skip this job: it races the publish job (assets get deleted and
     # re-uploaded → download 404 window); plain pushes are stable.
     if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
@@ -33,16 +36,30 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24' # npm 11: allow-scripts gates install scripts
-      - name: npm install -g from github (real user command)
+          node-version: '24'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: build linux-x64 binary for sub-package
         run: |
-          # install-links=true: git deps are symlinked to cacache tmp by default
-          # (breaks when tmp dir is cleaned); foreground-scripts avoids reify race
-          for i in 1 2 3; do
-            npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync && break
-            echo "attempt $i failed (asset refresh window?), retrying in 20s..."
-            sleep 20
-          done
+          # packages/cli-linux-x64/bin/ is gitignored (assemble artifact), so
+          # build it here — npm pack would TAR_ENTRY_ERROR on a missing bin dir.
+          mkdir -p packages/cli-linux-x64/bin
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags "-s -w \
+              -X github.com/aweyonhub/git-notes-sync/internal/version.Version=$(node -p 'require("./package.json").version') \
+              -X github.com/aweyonhub/git-notes-sync/internal/version.Commit=${GITHUB_SHA::7}" \
+            -o packages/cli-linux-x64/bin/gns ./cmd/gns
+      - name: local tgz install (registry-free e2e)
+        run: |
+          # sub-pkg tgz first so the meta package's optionalDependency is
+          # satisfied locally; install meta last. Separate dirs avoid the
+          # sub-pkg tgz matching git-notes-sync-*.tgz (scoped @ flattens to -).
+          mkdir -p /tmp/pkgs/sub /tmp/pkgs/meta
+          (cd packages/cli-linux-x64 && npm pack --pack-destination /tmp/pkgs/sub)
+          npm pack --pack-destination /tmp/pkgs/meta
+          npm install -g /tmp/pkgs/sub/git-notes-sync-*.tgz
+          npm install -g /tmp/pkgs/meta/git-notes-sync-*.tgz
           gns --version
           gns help | head -3
           npm ls -g --depth=0 | grep git-notes-sync
@@ -59,6 +76,7 @@ jobs:
           - { goos: darwin, goarch: amd64, ext: '' }
           - { goos: darwin, goarch: arm64, ext: '' }
           - { goos: windows, goarch: amd64, ext: '.exe' }
+          - { goos: windows, goarch: arm64, ext: '.exe' }
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

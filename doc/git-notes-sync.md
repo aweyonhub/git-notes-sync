@@ -261,13 +261,12 @@ gns daemon       # 启动轻量 daemon（可选，Windows 首选）
 npm install -g github:aweyonhub/git-notes-sync
 ```
 
-**实现机制**（go-npm 模式，方案演进见 doc/STATUS.md「npm 分发方案踩坑记录」）：
+**实现机制**（当前：方案③平台分包；演进历史见 doc/STATUS.md「npm 分发方案踩坑记录」）：
 
-1. **交叉编译**：Go 交叉编译各平台二进制（`windows/amd64`、`darwin/amd64`、`darwin/arm64`、`linux/amd64`、`linux/arm64`），GitHub Actions 打 tag 时自动构建并发布到 GitHub Releases，同时生成 `checksums.txt`（SHA-256 清单）。
-2. **npm 包壳**：package.json 位于仓库根（`npm install github:...` 要求）；包内含 `npm/bin/gns.js`（入口 shim）与 `npm/scripts/install.js`（下载器）。
-3. **postinstall 下载**：检测当前 OS / arch，从 GitHub Releases 下载对应平台二进制到 `npm/bin/gns[.exe]`——跟随 302 重定向、校验 SHA-256（`checksums.txt`，缺失降级跳过）、执行 `--version` 验证后原子落盘；支持代理（`HTTPS_PROXY`）与镜像（`GNS_RELEASE_BASE_URL`）。
-4. **bin 链接 shim**：`bin` 字段指向 `npm/bin/gns.js`（Node shim，spawn 下载的二进制，缺失时给出友好提示）。
-5. **allow-scripts**：npm 11+ 默认拦截 install 脚本，需 `--allow-scripts=git-notes-sync` 放行（npm 12 改为 `npm install-scripts approve` + `npm rebuild -g`）。
+1. **交叉编译**：Go 交叉编译 6 平台二进制（windows/amd64+arm64、darwin/amd64+arm64、linux/amd64+arm64），GitHub Actions 打 tag 时自动构建并发布到 GitHub Releases（含 `checksums.txt`），同时为 npm 子包提供二进制来源。
+2. **平台分包**：meta 包（仓库根 package.json）**无任何 install 脚本**（不触发 allow-scripts），`bin` 指向 `bin/gns.js`（Node shim，`require.resolve` 定位平台子包并 spawn）；`optionalDependencies` 锁版本声明 6 个 `@git-notes-sync/cli-<os>-<arch>` 子包，子包带 `os`/`cpu` 字段，npm 按平台自动安装对应子包。
+3. **发布流程**：`make cross` → `scripts/assemble-platform-packages.sh <version>`（单点版本同步）→ 先 6 子包后主包 `npm publish --access public`；子包未发布前 `github:` 直装会缺二进制（shim 给出提示）。
+4. **curl 直装 fallback**：`npm/scripts/install.js`（方案①下载器，302 跟随/SHA-256 校验/代理/镜像）保留，供不经过 npm 的安装脚本使用。
 
 **平台映射示例**：
 

@@ -60,8 +60,9 @@
 
 ### 2.3 分发与工程化
 
-- npm 壳：仓库根即 npm 包（package.json + scripts/install.js，postinstall 按平台下载 Releases 二进制，bin 注册 gns/notes-sync）
-- GitHub Actions：tag 触发交叉编译 5 平台 + 发布 Release
+- npm 分发（当前，方案③平台分包）：meta 包（仓库根 package.json，无 install 脚本，bin=bin/gns.js shim，optionalDependencies 锁 6 个平台子包）+ `packages/cli-<os>-<arch>`（os/cpu 字段 + 原生二进制）；发布流程 `make cross && scripts/assemble-platform-packages.sh <ver>`（单点版本同步）→ 先 6 子包后主包 `npm publish --access public`；`github:` 直装仍可用（`--install-links=true`，子包从 registry 解析）
+- npm 壳（历史，方案①）：仓库根即 npm 包（postinstall 按平台下载 Releases 二进制）；下载器保留在 `npm/scripts/install.js`（curl 直装 fallback）
+- GitHub Actions：tag 触发交叉编译 6 平台 + 发布 Release
 - Makefile：build / test / vet / cross / clean
 - README.md + example.config.toml（全量配置注释）
 - 规格更新：git-notes-sync.md 追加 §七 实现决策（19 项）
@@ -87,7 +88,7 @@
 | P2 | `gns install` / `gns uninstall` 注册/管理系统服务 | 一键注册 daemon 开机自启并反注册：Linux systemd user unit（`~/.config/systemd/user/gns.service`）；macOS launchd LaunchAgent（`~/Library/LaunchAgents/com.git-notes-sync.plist`）；Windows 任务计划程序（`schtasks /Create`，可选真服务需 nssm / x/sys/windows/svc）；`uninstall` 删除对应注册并停止 |
 | P2 | 非 git 目录纳入统一 git 仓库管理 | 可配置多个非 git 目录（桌面/下载/配置目录等），定时增量复制到集中 git 仓库，由该仓库承担版本管理与远端同步。设计要点：配置 `[[sync]]` 映射（源目录 → 集中仓库内子路径）；复用 daemon timer 触发；增量检测（mtime+size 或内容 hash）避免全量拷贝；复制前先 pull 合并远端，复制后 commit + push（走现有同步链路）；删除策略默认不传播（源删除仅记录，防误删），可选 `delete = true`；集中仓库被多端修改时按现有冲突模型处理 |
 | P3 | 一键安装脚本 `install.sh`/`install.ps1` | 封装冗长命令（`--install-links=true --foreground-scripts --allow-scripts=git-notes-sync` 参数过多），用户只跑一条命令：检测平台 → 下载对应 tgz/二进制 + 校验 checksum → 安装/提示；也可考虑 curl 直装（不依赖 npm） |
-| P3 | 可选：GoReleaser 替代手写 Actions | 多平台发布更成熟（changelog/Homebrew 等）；checksums 已实现（CI 生成 `checksums.txt`），当前 5 平台手写够用 |
+| P3 | 可选：GoReleaser 替代手写 Actions | 多平台发布更成熟（changelog/Homebrew 等）；checksums 已实现（CI 生成 `checksums.txt`），当前 6 平台手写够用 |
 | P3 | 可选：shell 补全 | `gns completion bash\|zsh\|fish`，npm 生态用户偏好 |
 
 ## 四、npm 分发方案踩坑记录（2026-08 讨论定稿）
@@ -102,9 +103,9 @@ Go 二进制 × npm 分发的 5 种方案对比（按尝试顺序）：
 | ④ | **懒下载 shim**（候选：install.js 合并进 gns.js，首次运行时下载） | 无 postinstall，shim 检测二进制 → 缺失则下载 → 执行 | ✅ **不拦**（无 install 脚本） | 重装/升级自动重下；单文件入口 | 首次运行需联网（体验比安装期差）；**不能下载到包目录**（sudo 全局安装时普通用户无写权限），须用用户缓存 `~/.cache/git-notes-sync/<version>/`；并发首跑会重复下载；postinstall 里跑 `gns --version` 验证会重新引入 allow-scripts（有脚本即拦），且 bin 链接在 lifecycle 之后创建、`gns` 不在 PATH | 待实现（2026-08 讨论中） |
 | ⑤ | **tgz 上传 Release + URL 安装**（候选，2026-08-14） | `npm pack` 生成 `git-notes-sync-<version>.tgz` 上传 GitHub Release，用户 `npm install -g --allow-scripts=git-notes-sync https://github.com/aweyonhub/git-notes-sync/releases/download/v<version>/git-notes-sync-<version>.tgz`；tarball 走标准解包（复制到 node_modules，非 git 依赖链接） | ⚠️ **拦**（postinstall 仍需放行） | **无 git 依赖符号链接问题**（链接到 cacache 临时目录的根源）；无 reify 竞态（postinstall 在真实包目录跑）；与现有下载器/checksum 链路完全复用 | Release 多一个资产；postinstall 仍需 allow-scripts；URL 安装不如 `github:` 直观 | 备选：现状 `--install-links=true` 已解决链接问题；npm 12 若对 git 依赖行为再变时启用 |
 
-**结论**：allow-scripts 是 npm 11 对所有带 install 脚本包的统一策略（esbuild/prisma 同款），与 shim 无关；①②④ 都有 postinstall 即被拦，③ 无脚本不拦但发布复杂。当前代码为 ①的加固版（redirect/checksum/proxy/override/版本验证）；④ 是下一步候选。
+**结论**：allow-scripts 是 npm 11 对所有带 install 脚本包的统一策略（esbuild/prisma 同款），与 shim 无关；①②④ 都有 postinstall 即被拦，③ 无脚本不拦但发布复杂。当前代码已切到 **③平台分包**（meta 包无脚本 + 6 个 os/cpu 子包，v0.1.2 分支落地）；①的加固版下载器保留在 `npm/scripts/install.js`（curl 直装 fallback，不再参与 npm 安装）；④ 仍是候选（若想彻底去掉 registry 依赖时启用）。
 
-**方案③发布权限与流程补充（2026-08-14 实测）**：无需任何申请/审核，npmjs.com 免费注册即可发布——public 包无限量免费（private 才付费：Pro/Org）；npm 强制 publish 前开启 2FA（账号安全要求，非门槛）；scope **无预注册机制**（先发布 `@git-notes-sync/xxx` 的账号即获得该 scope，与 GitHub org 无关）；已实测 `git-notes-sync` 与 `@git-notes-sync/cli-linux-x64` 等名字均未被占用。CI 自动发布用 granular access token（automation 类型，npm 网站生成）。发布流程：`npm publish --access public`（主包 + 6 平台子包，版本全部对齐），子包二进制可打进包内或从 GitHub Release 下载。
+**方案③发布权限与流程补充（2026-08-14 实测）**：无需任何申请/审核，npmjs.com 免费注册即可发布——public 包无限量免费（private 才付费：Pro/Org）；npm 强制 publish 前开启 2FA（账号安全要求，非门槛）；scope **无预注册机制**（先发布 `@git-notes-sync/xxx` 的账号即获得该 scope，与 GitHub org 无关）；已实测 `git-notes-sync` 与 `@git-notes-sync/cli-linux-x64` 等名字均未被占用。CI 自动发布用 granular access token（automation 类型，npm 网站生成）；**当前为手动发布**（`make cross && scripts/assemble-platform-packages.sh <ver> && npm publish`），账号与 token 就绪后补 publish workflow。发布流程：先 6 子包再主包，`--access public`，版本全部对齐（assemble 单点输入）；子包二进制由 CI 交叉编译注入。
 
 **npm 脚本拦截机制演进（重要，2026-08 实测确认）**：
 

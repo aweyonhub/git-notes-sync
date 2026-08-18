@@ -15,13 +15,16 @@ postinstall 按平台从 GitHub Releases 下载对应二进制（`gns-<platform>
 gns --version        # 或 notes-sync --version
 ```
 
-**两种安装来源**（对应平台 bin 下载逻辑相同，只是分支不同）：
+**两种安装来源**：
 
 ```bash
-# 正式版（main 分支，对应最新 Release 版本）
-npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
+# 方式一：npm registry（平台分包，零 flag；主包无 install 脚本不触发 allow-scripts）
+npm install -g git-notes-sync
+
+# 方式二：GitHub 直装（同架构；无需 --allow-scripts/--foreground-scripts，仅需 --install-links=true）
+npm install -g --install-links=true github:aweyonhub/git-notes-sync
 # 开发版（临时开发分支，如 <branch>）
-npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#<branch>
+npm install -g --install-links=true github:aweyonhub/git-notes-sync#<branch>
 ```
 
 > 版本对应关系：包 `package.json` 的 version = git tag = GitHub Release = 下载器拉取的资产版本；`#<branch>` 分支若 package.json 版本未变，下载的仍是当前 Release 的二进制（测试安装链路 OK，测试新二进制需先发对应版本或本地构建）。

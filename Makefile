@@ -1,5 +1,6 @@
 BIN := gns
-VERSION ?= 0.1.1
+# VERSION 单点来源 = package.json（与 assemble 脚本一致；可显式覆盖：make cross VERSION=0.1.2）
+VERSION ?= $(shell sed -n 's/.*"version": "\([^"]*\)".*/\1/p' package.json | head -1)
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
 PKG := github.com/aweyonhub/git-notes-sync
@@ -32,6 +33,7 @@ cross:
 	CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/gns-darwin-amd64 ./cmd/gns
 	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/gns-darwin-arm64 ./cmd/gns
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/gns-windows-amd64.exe ./cmd/gns
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/gns-windows-arm64.exe ./cmd/gns
 
 clean:
 	rm -rf dist $(BIN)

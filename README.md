@@ -11,16 +11,19 @@ Go 实现，调用系统 Git，不重新实现 Git。详见 [doc/git-notes-sync.
 
 ### npm（推荐，免编译）
 
-postinstall 按平台从 GitHub Releases 下载对应二进制（`gns-<platform>-<arch>[.exe]`，含 SHA-256 校验），提供 `gns`（主命令）/ `notes-sync`（别名）。
+平台分包：主包无任何 install 脚本（不触发 allow-scripts），原生二进制随平台子包 `@git-notes-sync/cli-<os>-<arch>` 自动安装（npm 按 os/cpu 过滤 optionalDependencies）。提供 `gns`（主命令）/ `notes-sync`（别名）。
 
 ```bash
-# 正式版（main 分支 = 最新 Release v0.1.0）
-npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync
+# 方式一：npm registry（子包发布后可用，零 flag）
+npm install -g git-notes-sync
+
+# 方式二：GitHub 直装（同架构，无需 --allow-scripts）
+npm install -g --install-links=true github:aweyonhub/git-notes-sync
 # 开发版（临时开发分支，如 <branch>）
-npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#<branch>
+npm install -g --install-links=true github:aweyonhub/git-notes-sync#<branch>
 ```
 
-> **三个 flag 缺一不可**：`--install-links=true` 强制复制解包（npm 对 git 依赖默认是符号链接到 cacache 临时目录，临时目录被清后包就失效）；`--foreground-scripts` 前台跑 postinstall（避免后台竞态）；`--allow-scripts=git-notes-sync` 放行 postinstall（npm 11+ 默认拦截 install 脚本；npm 12 需 `npm install-scripts approve` + `npm rebuild -g git-notes-sync`）。
+> `--install-links=true` 仅 git 直装需要（npm 对 git 依赖默认符号链接到 cacache 临时目录，被清后包失效）；registry 安装天然复制解包。子包未发布时 `github:` 直装会缺二进制（shim 会给出提示）。
 
 ### 手动构建
 
@@ -100,4 +103,4 @@ internal/
   cli/      命令分发
 ```
 
-发布：打 tag（如 `v0.1.0`）→ GitHub Actions 测试 + 交叉编译 5 平台 + 生成 `checksums.txt` → Release → npm 壳 `postinstall` 下载（SHA-256 校验）。开发分支：`dev`。
+发布：打 tag（如 `v0.1.1`）→ GitHub Actions 测试 + 交叉编译 6 平台 + 生成 `checksums.txt` → Release 资产；npm 侧经平台分包（meta 包 + 6 个 os/cpu 子包）发布到 npm registry（流程见 `doc/STATUS.md` §四）。

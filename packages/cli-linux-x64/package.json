@@ -1,0 +1,15 @@
+{
+  "name": "@git-notes-sync/cli-linux-x64",
+  "version": "0.1.2",
+  "description": "git-notes-sync native binary for linux/x64",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "license": "MIT"
+}
