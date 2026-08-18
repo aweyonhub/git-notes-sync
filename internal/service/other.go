@@ -1,15 +1,15 @@
-//go:build !darwin && !linux
+//go:build !darwin && !linux && !windows
 
 package service
 
 import "fmt"
 
 func Install(o LaunchOptions) error {
-	return fmt.Errorf("gns install is currently macOS-only (launchd) or Linux-only (systemd/cron); nothing to do on this platform — configure cron manually, or build/run on macOS/Linux")
+	return fmt.Errorf("gns install is supported on macOS (launchd), Linux (systemd/cron) and Windows (Task Scheduler); nothing to do on this platform")
 }
 
 func Uninstall(o LaunchOptions) error {
-	return fmt.Errorf("gns uninstall is currently macOS-only (launchd) or Linux-only (systemd/cron); nothing to remove on this platform")
+	return fmt.Errorf("gns uninstall is supported on macOS (launchd), Linux (systemd/cron) and Windows (Task Scheduler); nothing to remove on this platform")
 }
 
 func DefaultLogDir(home string) string { return "" }

@@ -252,17 +252,20 @@ gns daemon -c my.toml   # 指定全局配置
 
 daemon 只做两件事：内部 timer 周期触发同步、缓存配置（配置变更自动热重载）。不做 watcher、无状态持久化。输出走 stderr（launchd 下即 `<label>.err.log`），时间戳格式（`YYYY-MM-DD HH:MM:SS`）与 interval 模式日志一致。
 
-### `gns install` / `gns uninstall` — 一键注册/卸载定时任务（macOS launchd / Linux systemd·cron）
+### `gns install` / `gns uninstall` — 一键注册/卸载定时任务（macOS launchd / Linux systemd·cron / Windows 任务计划）
 
 ```bash
 gns install             # macOS：launchd 按配置 sync_interval 触发一次 `gns sync-all`（无状态，进程跑完即退）
                         # Linux：systemd timer（默认）或 crontab（--cron）
-gns install --daemon    # 常驻：macOS KeepAlive / Linux systemd Restart=always 守护 `gns daemon`
+                        # Windows：任务计划每分钟触发一次 `gns sync-all`（schtasks，无需管理员）
+gns install --daemon    # 常驻：macOS KeepAlive / Linux systemd Restart=always / Windows ONLOGON 守护 `gns daemon`
                         #       （节奏由配置 sync_interval 控制；Linux 加 --cron 则用 @reboot）
-gns install -interval 600    # 改触发间隔（优先级：-interval > 配置 sync_interval > 默认 600s）
+gns install -interval 600    # 改触发间隔（优先级：-interval > 配置 sync_interval > 默认 600s；Windows 最小 1 分钟）
 # 其他 flag：-exe path（默认本二进制）、-label s（默认 com.git-notes-sync）、-force（覆盖已有）
-gns uninstall           # 停止并删除注册（macOS：bootout + 删 plist；Linux：disable + 删 unit / crontab 块）
+gns uninstall           # 停止并删除注册（macOS：bootout + 删 plist；Linux：disable + 删 unit / crontab 块；Windows：schtasks /Delete）
 ```
+
+**Windows（任务计划程序）**：用户级任务（`schtasks /Create`，无需管理员，登录后才运行——与 launchd Agent / systemd user unit 语义一致）。`-interval` 模式 = `/SC MINUTE`（最小 1 分钟，小于 60s 自动取 1）；`--daemon` 模式 = `/SC ONLOGON`（登录时启动常驻 daemon）。输出重定向到 `%LOCALAPPDATA%\git-notes-sync\<label>.log`。查看/管理：`schtasks /Query /TN <label>`、`taskschd.msc`（任务计划程序）。任务名 = `-label`（默认 `com.git-notes-sync`）。⚠️ 任务计划程序没有 keep-alive 机制（launchd KeepAlive / systemd Restart=always 的等价物）——daemon 崩溃后不会自动重启（ONLOGON 任务在下次登录时再跑）。
 
 **macOS（launchd）**：plist 位于 `~/Library/LaunchAgents/<label>.plist`，日志在 `~/Library/Logs/<label>.log(.err.log)`。plist 自动包含：
 

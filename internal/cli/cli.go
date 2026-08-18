@@ -32,8 +32,8 @@ usage:
   gns resolve [flags]     list or resolve persisted conflict markers
   gns repos <cmd>         manage the repo list: list | add | del
   gns config <cmd>        inspect / edit config: list | get | set | unset
-  gns install [flags]     install launchd LaunchAgent (macOS)
-  gns uninstall [flags]   remove launchd LaunchAgent (macOS)
+  gns install [flags]     install launchd (macOS) / systemd-cron (Linux) / Task Scheduler (Windows)
+  gns uninstall [flags]   remove the registered service
   gns daemon [flags]      run the lightweight timer daemon
   gns version
 
@@ -72,13 +72,13 @@ commit flags:
 daemon flags:
   -once        run a single tick then exit
 
-install flags (macOS launchd / Linux systemd-cron):
+install flags (macOS launchd / Linux systemd-cron / Windows Task Scheduler):
   -interval N  tick seconds for interval mode (default: config sync_interval, else 600)
   -daemon      resident mode: keep 'gns daemon' alive instead of interval ticks
                (cadence = config sync_interval)
   -cron        Linux: use crontab instead of systemd user units
   -exe path    program to launch (default: this binary)
-  -label s     launchd label / systemd unit name (default: com.git-notes-sync)
+  -label s     launchd label / systemd unit / task name (default: com.git-notes-sync)
   -force       overwrite an existing plist
 
 uninstall flags:
@@ -689,7 +689,7 @@ func cmdInstall(args []string) error {
 	fs.BoolVar(&cronMode, "cron", false, "Linux: use crontab instead of systemd units")
 	fs.StringVar(&exe, "exe", "", "program to launch (default: this binary)")
 	fs.StringVar(&label, "label", "com.git-notes-sync", "launchd label / systemd unit name")
-	fs.BoolVar(&force, "force", false, "overwrite existing plist")
+	fs.BoolVar(&force, "force", false, "overwrite existing service/task")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -722,7 +722,7 @@ func cmdInstall(args []string) error {
 	backend := service.BackendAuto
 	if cronMode {
 		if runtime.GOOS != "linux" {
-			return errors.New("--cron is Linux-only (crontab backend); on macOS use the default launchd backend")
+			return errors.New("--cron is Linux-only (crontab backend); on macOS use the default launchd backend, on Windows the default Task Scheduler backend")
 		}
 		backend = service.BackendCron
 	}
@@ -773,6 +773,16 @@ func cmdInstall(args []string) error {
 			fmt.Printf("  logs:    journalctl --user -u %s\n", label)
 		}
 		fmt.Println("verify:  systemctl --user list-timers | grep " + label)
+	case "windows":
+		fmt.Printf("installed gns scheduler %s\n", label)
+		fmt.Printf("  mode:  %s\n", modeDesc)
+		fmt.Printf("  task:  %s (Task Scheduler, no admin needed)\n", label)
+		fmt.Printf("  logs:  %s\\%s.log\n", opts.LogDir, label)
+		fmt.Println("verify:  schtasks /Query /TN \"" + label + "\"")
+		if daemonMode {
+			fmt.Println("  note: Task Scheduler has no keep-alive — a crash won't restart;")
+			fmt.Println("        the task runs once per logon, keep `gns daemon` alive via other means")
+		}
 	default:
 		fmt.Printf("installed gns scheduler %s\n", label)
 	}
@@ -825,6 +835,8 @@ func cmdUninstall(args []string) error {
 		fmt.Printf("uninstalled launchd agent %s\n", label)
 	case "linux":
 		fmt.Printf("uninstalled gns scheduler %s (systemd units / crontab block removed)\n", label)
+	case "windows":
+		fmt.Printf("uninstalled gns scheduler %s (Task Scheduler task removed)\n", label)
 	default:
 		fmt.Printf("uninstalled %s\n", label)
 	}
