@@ -107,6 +107,14 @@ Go 二进制 × npm 分发的 5 种方案对比（按尝试顺序）：
 
 **方案③发布权限与流程补充（2026-08-14 实测）**：无需任何申请/审核，npmjs.com 免费注册即可发布——public 包无限量免费（private 才付费：Pro/Org）；npm 强制 publish 需 2FA 或带 bypass 的 granular token；scope **无预注册机制**（先发布 `@xxx/yyy` 的账号即获得该 scope，与 GitHub org 无关）；本项目的 scope 直接**注册 npm org `aweyonhub`**（官方保留、无抢注风险，2026-08-18 确定），包名 `@aweyonhub/git-notes-sync` 与 6 个平台子包名均实测可用。CI 自动发布已配置（tag 触发：assemble + 6 子包 + packages/meta 主包，`NPM_TOKEN` secret 认证，bypass-2FA granular token）；**注意**：bypass-2FA token 不能 unpublish（npm 新规则），删除版本需网页操作或 2FA。发布流程：先 6 子包再主包，`--access public`，版本全部对齐（assemble 单点输入）；子包二进制由 CI 交叉编译注入（Linux 打包保留 755 执行位，Windows 手动打包会丢执行位——assemble 已加 chmod +x 防御）。
 
+**npm registry CI 发布配置（3 步走通）**：
+
+1. **注册 npm 账号与 org**：https://www.npmjs.com/signup 注册账号（免费）；https://www.npmjs.com/org/new 创建 org（如 `aweyonhub`），org 名即 scope 前缀（`@aweyonhub/xxx`）。
+2. **生成 Granular Access Token（不带 2FA）**：https://www.npmjs.com/settings/~/tokens → Generate New Token → **Granular Access Token**；权限选 "Read and write"；scopes 勾选你的 org（如 `aweyonhub`）；**关键**：取消勾选 "Require two-factor authentication"（这样 token 不需要 2FA 就能 publish，适合 CI 无人值守场景）。生成后复制 token（形如 `npm_xxxxxxxxxxxxxxxxxxxx`）。
+3. **配置 GitHub Actions Secret**：进入仓库 https://github.com/<owner>/<repo>/settings/secrets/actions → 选择 **Repository secrets**（不是 Environment secrets）→ New repository secret；Name 填 `NPM_TOKEN`，Value 填上一步复制的 token；保存。CI workflow 中 `setup-node` 会读取这个 secret 自动登录 npm，`npm publish` 即可免交互发布。
+
+配置完成后，打 `v*` tag 推送到 main，GitHub Actions 会自动：交叉编译 6 平台二进制 → 上传 GitHub Release → assemble 子包 → `npm publish` 7 个包（6 子包 + 1 主包）。全程无需人工介入。
+
 **npm 脚本拦截机制演进（重要，2026-08 实测确认）**：
 
 | 版本 | 机制 | 放行方式 |
@@ -127,6 +135,15 @@ Go 二进制 × npm 分发的 5 种方案对比（按尝试顺序）：
 - **git 依赖符号链接（根源级发现，2026-08-14）**：npm 对 `github:` 语法默认符号链接到 `cacache/tmp/git-cloneXXX`（`npm list -g` 显示 `-> ...\git-cloneXXX`），临时目录被清后包失效——这才是 MODULE_NOT_FOUND/竞态的根源。**修复：`--install-links=true --foreground-scripts`**（强制复制解包 + 前台跑脚本）。实测：`--install-links=false` 安装失败或留下失效链接；`true` 装成普通目录一切正常。完整命令：`npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync`
 - shim 必须有 shebang（`#!/usr/bin/env node`），否则 bash 当 shell 解析
 - .gitignore 通配符误伤源文件（`gns*` 曾忽略 `gns.js`）
+
+**CI npm publish 踩坑**（v0.1.3，2026-08-18 首次自动发布，4 轮失败后修复，详见 [ci.yml](https://github.com/aweyonhub/git-notes-sync/blob/main/.github/workflows/ci.yml)）：
+
+| # | 现象 | 根因 | 修复 |
+|---|------|------|------|
+| 1 | assemble 脚本 Permission denied（exit 126） | `.sh` 文件 git 权限位是 `100644`（无 +x），Linux runner checkout 后不可执行 | `git update-index --chmod=+x` 设置 `100755` |
+| 2 | npm publish 报 ENEEDAUTH | `setup-node` 没配 `registry-url`，`NODE_AUTH_TOKEN` 写了但 npm 不知道往哪个 registry 认证 | `setup-node` 加 `registry-url: 'https://registry.npmjs.org'` |
+| 3 | 部分子包报 E409 Conflict（"Failed to save packument"） | 连续发 7 个包太快，npm 内部状态没同步完就撞上竞态 | 每个包发布后 sleep 5s，加 3 次重试 + 10 秒间隔 |
+| 4 | 重试时已发布的包报 403（"cannot publish over"） | 前几次 CI 失败但部分包已发成功，全量重发撞版本冲突 | 发布前 `npm view` 检查版本是否已存在，已存在则 skip |
 
 ---
 
