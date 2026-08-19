@@ -67,7 +67,18 @@
 - README.md + example.config.toml（全量配置注释）
 - 规格更新：git-notes-sync.md 追加 §七 实现决策（19 项）
 
-### 2.4 开发环境
+### 2.4 Windows 调度黑窗规避（wscript + .vbe）
+
+任务计划**不能直接注册 `gns.exe`**：每次触发都会弹黑色控制台窗口（gns 是控制台程序）。方案：任务注册 `wscript.exe` 执行一个 `.vbe` 包装脚本，由它隐藏窗口拉 gns：
+
+- **注册**：`schtasks /TR 'wscript.exe "%LOCALAPPDATA%\git-notes-sync\<label>.vbe"'`（wscript 是 GUI 程序，进程本身不弹窗）
+- **.vbe 内容**：一行 VBS 脚本 `CreateObject("WScript.Shell").Run "<gns 命令>", 0, False`——`Run(..., 0)` 的窗口状态 0 = SW_HIDE，隐藏启动；`False` 不等待
+- **gns 命令**：`"<exe>" sync-all --log "<path>"`（interval）或 `"<exe>" daemon -c "<cfg>" --log "<path>"`（daemon）；VBS 字符串字面量中双引号写为 `""` 转义（`taskVbeContent` 用 `strings.ReplaceAll` 处理）
+- **日志**：`--log` 由 gns 内部重定向 + 轮转，与 macOS/linux 一致（三平台统一）
+- **为什么不是 cmd /c**：早期方案 `cmd /c ""exe" sync-all >> log 2>&1"` 有引号剥层陷阱且 cmd 窗口闪烁；wscript 方案实测无闪烁、无引号错乱
+- **测试**：`internal/service/windows_test.go` 覆盖 `taskVbeContent` 引号转义（含 exe/log 路径带引号场景）与 `taskCreateArgs`
+
+### 2.5 开发环境
 
 - Go 1.22.5 安装于 WSL `~/go-sdk/go`（无 root，解压即用）
 - PATH 已持久化到 `~/.bashrc`（符号链接目标文件），新终端直接可用
@@ -82,12 +93,12 @@
 | P0 | ~~打 tag 发布 v0.1.0~~ | ✅ 已完成（重新发布，旧版已删）：v0.1.0 CI 全绿，Release 6 资产（5 平台二进制 + `checksums.txt`）（https://github.com/aweyonhub/git-notes-sync/releases/tag/v0.1.0） |
 | P0 | ~~验证 npm 安装链路~~ | ✅ **Windows 实测通过（2026-08-14）**：`npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync#dev` 成功，postinstall 下载二进制，`gns --version` 正常；关键修复：files 白名单改目录形式、shim 补 shebang、**--install-links=true 强制复制解包**（git 依赖默认符号链接到 cacache 临时目录是失效根源）；CI 有 npm-install job 持续守护 |
 | P1 | 真实 AI endpoint 冒烟 | 本地 Ollama 或任意 OpenAI-compatible 服务验证 `commit_message="ai"` 与 `resolve --ai` |
-| P1 | Windows 实机验证 | daemon 行为、credential helper / SSH 环境继承、autocrlf 场景 |
+| P1 | Windows 实机验证 | ✅ daemon 行为、credential helper 继承已验；autocrlf 场景待续（v0.1.4 已含 wscript + .vbe 隐藏窗口方案，见下） |
 | P2 | `gns resolve` 交互式模式 | 逐个文件选择 ours/theirs/AI（当前为全局 flag 一次性处理） |
 | P2 | ~~cron 示例文档完善~~ | ✅ 已完成：USAGE §5 有 cron/launchd/Windows 三种示例 + launchd plist 完整模板 + `gns install` 一键注册 |
-| P2 | `gns install` / `gns uninstall` 注册/管理系统服务 | ✅ **macOS 已落地（v0.1.3）**：launchd LaunchAgent（`~/Library/LaunchAgents/com.git-notes-sync.plist`），支持定时模式（StartInterval + `gns sync-all`，默认 600s）与常驻模式（`--daemon` + KeepAlive）；自动注入 PATH/HOME 环境变量与日志路径；`uninstall` bootout + 删 plist；真机验证通过（含 launchd 环境下真实仓库 fetch/push）。✅ **Linux 已落地（v0.1.3）**：systemd user units（`~/.config/systemd/user/<label>.{service,timer}`，timer 默认 600s / daemon 模式 Restart=always）与 crontab 后端（`--cron`，托管标记块 + @reboot）；unit/cron 生成与 crontab 合并/剥离纯函数有单测，Linux 真机验证通过（Debian 12 WSL2）。✅ **Windows 已落地（v0.1.3）**：任务计划程序（schtasks，MINUTE 间隔 / ONLOGON 常驻，无需管理员，日志重定向 `%LOCALAPPDATA%\git-notes-sync\`）；`gns logs` 三平台查看日志（文件 tail / journalctl / 跟随） |
+| P2 | `gns install` / `gns uninstall` 注册/管理系统服务 | ✅ **macOS 已落地（v0.1.4）**：launchd LaunchAgent（`~/Library/LaunchAgents/com.git-notes-sync.plist`），支持定时模式（StartInterval + `gns sync-all`，默认 600s）与常驻模式（`--daemon` + KeepAlive）；自动注入 PATH/HOME 环境变量与日志路径；`uninstall` bootout + 删 plist；真机验证通过（含 launchd 环境下真实仓库 fetch/push）。✅ **Linux 已落地（v0.1.4）**：systemd user units（`~/.config/systemd/user/<label>.{service,timer}`，timer 默认 600s / daemon 模式 Restart=always）与 crontab 后端（`--cron`，托管标记块 + @reboot）；unit/cron 生成与 crontab 合并/剥离纯函数有单测，Linux 真机验证通过（Debian 12 WSL2）。✅ **Windows 已落地（v0.1.4）**：任务计划程序（schtasks，MINUTE 间隔 / ONLOGON 常驻，无需管理员）。**黑窗规避（重要）**：任务不能直接注册 `gns.exe`（每次触发会弹黑色控制台窗口）——必须经 `wscript.exe` 运行 `.vbe` 包装脚本隐藏窗口再拉 gns（WshShell.Run(..., 0)），`gns install` 自动生成 `<label>.vbe` 并注册；日志统一 `--log`（`%LOCALAPPDATA%\git-notes-sync\<label>.log`）三平台一致，`gns logs`（tail/跟随/`--path`）可查。日志轮转：`--log` 模式超 `[log] max_size_kb`（默认 500KB）自动切 `.1`（保留 `max_backups` 份）；systemd 由 journald 管理。待办：Linux/Windows autocrlf 等边界实测 |
 | P2 | 非 git 目录纳入统一 git 仓库管理 | 可配置多个非 git 目录（桌面/下载/配置目录等），定时增量复制到集中 git 仓库，由该仓库承担版本管理与远端同步。设计要点：配置 `[[sync]]` 映射（源目录 → 集中仓库内子路径）；复用 daemon timer 触发；增量检测（mtime+size 或内容 hash）避免全量拷贝；复制前先 pull 合并远端，复制后 commit + push（走现有同步链路）；删除策略默认不传播（源删除仅记录，防误删），可选 `delete = true`；集中仓库被多端修改时按现有冲突模型处理 |
-| P3 | 一键安装脚本 `install.sh`/`install.ps1` | 封装冗长命令（`--install-links=true --foreground-scripts --allow-scripts=git-notes-sync` 参数过多），用户只跑一条命令：检测平台 → 下载对应 tgz/二进制 + 校验 checksum → 安装/提示；也可考虑 curl 直装（不依赖 npm）。注：`gns install`（v0.1.3）已覆盖"注册定时任务"侧的一键化 |
+| P3 | 一键安装脚本 `install.sh`/`install.ps1` | 封装冗长命令（`--install-links=true --foreground-scripts --allow-scripts=git-notes-sync` 参数过多），用户只跑一条命令：检测平台 → 下载对应 tgz/二进制 + 校验 checksum → 安装/提示；也可考虑 curl 直装（不依赖 npm）。注：`gns install`（v0.1.4）已覆盖"注册定时任务"侧的一键化 |
 | P3 | 可选：GoReleaser 替代手写 Actions | 多平台发布更成熟（changelog/Homebrew 等）；checksums 已实现（CI 生成 `checksums.txt`），当前 6 平台手写够用 |
 | P3 | 可选：shell 补全 | `gns completion bash\|zsh\|fish`，npm 生态用户偏好 |
 
@@ -135,6 +146,7 @@ Go 二进制 × npm 分发的 5 种方案对比（按尝试顺序）：
 - **git 依赖符号链接（根源级发现，2026-08-14）**：npm 对 `github:` 语法默认符号链接到 `cacache/tmp/git-cloneXXX`（`npm list -g` 显示 `-> ...\git-cloneXXX`），临时目录被清后包失效——这才是 MODULE_NOT_FOUND/竞态的根源。**修复：`--install-links=true --foreground-scripts`**（强制复制解包 + 前台跑脚本）。实测：`--install-links=false` 安装失败或留下失效链接；`true` 装成普通目录一切正常。完整命令：`npm install -g --install-links=true --foreground-scripts --allow-scripts=git-notes-sync github:aweyonhub/git-notes-sync`
 - shim 必须有 shebang（`#!/usr/bin/env node`），否则 bash 当 shell 解析
 - .gitignore 通配符误伤源文件（`gns*` 曾忽略 `gns.js`）
+- **macOS 覆盖 npm 包内二进制 → 执行被 SIGKILL（2026-08-19 实测）**：本地升级 npm 全局包的手动替换（如 `cp ./gns` 覆盖 `~/.local/lib/node_modules/@aweyonhub/git-notes-sync/node_modules/<platformpkg>/bin/gns`）会导致 `gns` 命令无输出 exit 1、直接跑二进制 `Killed: 9`（137）。根因：覆盖保留了原 inode 上的 macOS provenance 元数据（npm 下载来源标记），Sequoia Gatekeeper 对"来源标记 + 内容被替换"的可执行直接 SIGKILL（`xattr -d com.apple.provenance` 无效，临时目录全新 cp 的文件就不受影响）。**修复/规避：先 `rm` 再 `cp`（新 inode）**；发行版升级请走 npm（`npm install @aweyonhub/git-notes-sync@<ver> -g`），本机二进制覆盖仅用于未发版的本地快照
 
 **CI npm publish 踩坑**（v0.1.3，2026-08-18 首次自动发布，4 轮失败后修复，详见 [ci.yml](https://github.com/aweyonhub/git-notes-sync/blob/main/.github/workflows/ci.yml)）：
 

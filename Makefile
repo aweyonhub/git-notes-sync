@@ -1,5 +1,5 @@
 BIN := gns
-# VERSION 单点来源 = package.json（与 assemble 脚本一致；可显式覆盖：make cross VERSION=0.1.3）
+# VERSION 单点来源 = package.json（与 assemble 脚本一致；可显式覆盖：make cross VERSION=0.1.4）
 VERSION ?= $(shell sed -n 's/.*"version": "\([^"]*\)".*/\1/p' package.json | head -1)
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 

@@ -205,21 +205,23 @@ func installCron(o LaunchOptions) error {
 	if err := crontabWrite(mergeCrontab(existing, cronBlock(o))); err != nil {
 		return err
 	}
-	// kick off an immediate first run (interval mode) so the log exists
-	// right away instead of waiting for the first cron tick; daemon mode
-	// starts at the next reboot per @reboot semantics
+	// Kick off an immediate first run (interval mode) so the log exists right
+	// away instead of waiting for the first cron tick; daemon mode starts at
+	// the next reboot per @reboot semantics. A failed first run is only a
+	// warning — the cron entry is already installed and will retry on schedule.
 	if o.Mode == ModeInterval {
 		logFile, err := os.OpenFile(cronLogPath(o), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
-			return fmt.Errorf("first run: open log: %w", err)
+			fmt.Fprintf(os.Stderr, "warn: first run: open log: %v\n", err)
+			return nil
 		}
-		defer logFile.Close()
 		cmd := exec.Command(o.Exe, "sync-all")
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("first run: %w", err)
+			fmt.Fprintf(os.Stderr, "warn: first run failed (will retry on cron schedule): %v\n", err)
 		}
+		logFile.Close()
 	}
 	return nil
 }

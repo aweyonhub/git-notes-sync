@@ -89,6 +89,7 @@ func buildPlist(o LaunchOptions) string {
 	} else {
 		writeArrayString(&b, o.Exe, "sync-all")
 	}
+	writeArrayString(&b, "--log", o.logPath(".log"))
 	b.WriteString("\t</array>\n")
 
 	if o.Mode == ModeDaemon {
@@ -109,8 +110,6 @@ func buildPlist(o LaunchOptions) string {
 	writeKeyString(&b, "HOME", homeDir(o.Home))
 	b.WriteString("\t</dict>\n")
 
-	writeKeyString(&b, "StandardOutPath", o.logPath(".log"))
-	writeKeyString(&b, "StandardErrorPath", o.logPath(".err.log"))
 	writeKeyString(&b, "ProcessType", "Background")
 
 	b.WriteString("</dict>\n</plist>\n")

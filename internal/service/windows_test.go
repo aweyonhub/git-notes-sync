@@ -46,8 +46,7 @@ func TestTaskVbeContentInterval(t *testing.T) {
 	}
 	got := taskVbeContent(o)
 	for _, sub := range []string{
-		`cmd /c """"C:\Program Files\git-notes-sync\gns.exe"" sync-all >>`,
-		`>> ""C:\Users\me\AppData\Local\git-notes-sync\com.git-notes-sync.log"" 2>&1""`,
+		`""C:\Program Files\git-notes-sync\gns.exe"" sync-all --log ""C:\Users\me\AppData\Local\git-notes-sync\com.git-notes-sync.log""`,
 		`, 0, False`,
 	} {
 		if !strings.Contains(got, sub) {
@@ -66,7 +65,7 @@ func TestTaskVbeContentDaemon(t *testing.T) {
 	}
 	got := taskVbeContent(o)
 	for _, sub := range []string{
-		`cmd /c """"C:\gns.exe"" daemon -c ""C:\Users\me\.config\git-notes-sync\config.toml"" >>`,
+		`""C:\gns.exe"" daemon -c ""C:\Users\me\.config\git-notes-sync\config.toml"" --log ""C:\Users\me\AppData\Local\git-notes-sync\com.git-notes-sync.log""`,
 		`, 0, False`,
 	} {
 		if !strings.Contains(got, sub) {

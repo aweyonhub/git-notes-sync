@@ -44,6 +44,8 @@ var configFields = []FieldSpec{
 	{"ai", "timeout", "int", "AI call timeout, seconds"},
 	{"ai", "max_diff_bytes", "int", "cap diff bytes sent to AI"},
 	{"ai", "agent_file", "string", "repo-relative agent instructions file"},
+	{"log", "max_size_kb", "int", "rotate log when exceeds this size (KB)"},
+	{"log", "max_backups", "int", "number of historical log copies to keep"},
 }
 
 // AllFields returns the list of settable scalar fields.

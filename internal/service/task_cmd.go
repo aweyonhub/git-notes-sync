@@ -22,17 +22,16 @@ func taskCommand(o LaunchOptions) string {
 }
 
 // taskVbeContent builds the wrapper .vbe that wscript.exe executes. It runs
-// `cmd /c ""<exe>" ... >> "<log>" 2>&1"` with the window hidden (Run's 2nd
-// arg 0 = SW_HIDE). The DOUBLE outer quotes are deliberate: cmd /c strips the
-// outermost pair, leaving the single-quoted exe/log paths intact (single-level
-// quoting makes cmd strip the first quote and break the exe path).
+// `gns sync-all --log <path>` (or `gns daemon -c <config> --log <path>`) with
+// the window hidden (Run's 2nd arg 0 = SW_HIDE). gns handles log rotation
+// internally via --log.
 func taskVbeContent(o LaunchOptions) string {
-	log := o.LogDir + `\` + o.Label + ".log"
+	logPath := o.LogDir + `\` + o.Label + ".log"
 	var cmd string
 	if o.Mode == ModeInterval {
-		cmd = `cmd /c ""` + o.Exe + `" sync-all >> "` + log + `" 2>&1"`
+		cmd = `"` + o.Exe + `" sync-all --log "` + logPath + `"`
 	} else {
-		cmd = `cmd /c ""` + o.Exe + `" daemon -c "` + o.Config + `" >> "` + log + `" 2>&1"`
+		cmd = `"` + o.Exe + `" daemon -c "` + o.Config + `" --log "` + logPath + `"`
 	}
 	// VBScript string literal: a literal double quote is written as "".
 	vbs := strings.ReplaceAll(cmd, `"`, `""`)

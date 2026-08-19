@@ -33,8 +33,8 @@ func TestBuildPlistInterval(t *testing.T) {
 		"<string>/Users/alice/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
 		"<key>HOME</key>",
 		"<string>/Users/alice</string>",
+		"<string>--log</string>",
 		"<string>/Users/alice/Library/Logs/com.git-notes-sync.log</string>",
-		"<string>/Users/alice/Library/Logs/com.git-notes-sync.err.log</string>",
 		"<key>ProcessType</key>",
 		"<string>Background</string>",
 	} {

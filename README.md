@@ -50,6 +50,7 @@ gns resolve --ours | --theirs   # 保留单侧，去 markers，提交并推送
 gns resolve --ai                # AI 语义合并（需配置 [ai]）
 gns install       # 一键注册定时任务（macOS launchd / Linux systemd·cron / Windows 任务计划）
 gns uninstall     # 卸载定时任务
+gns logs          # 查看定时任务日志（-n 行数 / -f 跟随 / --path 打印路径）
 gns daemon        # 轻量 daemon（Windows 首选，timer 轮询多仓库）
 gns version
 ```

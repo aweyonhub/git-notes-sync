@@ -42,6 +42,12 @@ type Config struct {
 
 	Conflict Conflict `toml:"conflict"`
 	AI       AI       `toml:"ai"`
+	Log      Log      `toml:"log"`
+}
+
+type Log struct {
+	MaxSizeKB  int `toml:"max_size_kb"` // 日志文件最大大小（KB），超阈值轮转
+	MaxBackups int `toml:"max_backups"` // 保留的历史日志副本数（.log.1, .log.2, ...）
 }
 
 type Conflict struct {
@@ -83,6 +89,10 @@ func Defaults() *Config {
 			TimeoutSec:   60,
 			MaxDiffBytes: 50 * 1024,
 			AgentFile:    "AGENTS.md",
+		},
+		Log: Log{
+			MaxSizeKB:  500,
+			MaxBackups: 1,
 		},
 	}
 }

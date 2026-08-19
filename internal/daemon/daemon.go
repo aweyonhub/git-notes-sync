@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aweyonhub/git-notes-sync/internal/config"
+	logPkg "github.com/aweyonhub/git-notes-sync/internal/log"
 	"github.com/aweyonhub/git-notes-sync/internal/sync"
 )
 
@@ -61,6 +62,18 @@ func Run(globalPath string, once bool) error {
 				logf("[%s] ERROR: %v", disp, rep.Err)
 			}
 		}
+		// Rotate the log every tick when running with --log redirection
+		// (GNS_LOG_FILE is set by the launcher). Without this the file would
+		// grow unbounded for the whole daemon lifetime.
+		if lp := os.Getenv("GNS_LOG_FILE"); lp != "" {
+			if err := logPkg.Rotate(lp, cfg.Log.MaxSizeKB, cfg.Log.MaxBackups); err != nil {
+				logf("log rotate: %v", err)
+			}
+			if err := logPkg.Cleanup(lp, cfg.Log.MaxBackups); err != nil {
+				logf("log cleanup: %v", err)
+			}
+		}
+
 		if once {
 			return nil
 		}

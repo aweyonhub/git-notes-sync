@@ -83,7 +83,7 @@ func TestCronBlockInterval(t *testing.T) {
 	lines := cronBlock(o)
 	want := []string{
 		cronMarkerOpen,
-		"*/5 * * * * /home/alice/.local/bin/gns sync-all >> /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log 2>&1",
+		"*/5 * * * * /home/alice/.local/bin/gns sync-all --log /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log",
 		cronMarkerClose,
 	}
 	if len(lines) != len(want) {
@@ -132,7 +132,7 @@ func TestCronBlockDaemon(t *testing.T) {
 	o.Mode = ModeDaemon
 	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
 	lines := cronBlock(o)
-	if got := lines[1]; got != "@reboot /home/alice/.local/bin/gns daemon -c /home/alice/.config/git-notes-sync/config.toml >> /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log 2>&1" {
+	if got := lines[1]; got != "@reboot /home/alice/.local/bin/gns daemon -c /home/alice/.config/git-notes-sync/config.toml --log /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log" {
 		t.Errorf("daemon cron line = %q", got)
 	}
 }

@@ -250,14 +250,15 @@ gns config list -c my.toml         # 指定配置文件（默认全局配置）
 
 ```bash
 gns logs                  # 最近 50 行（默认 label com.git-notes-sync）
-gns logs -n 200           # 更多行
-gns logs -f               # 跟随新输出
-gns logs -label <label>   # 其他 label
+gns logs -f               # 跟随新输出（默认先显示最后 20 行，再实时跟随）
+gns logs -n 200 -f        # 先显示最后 200 行再跟随（显式 -n 优先生效）
+gns logs --label <label>   # 其他 label
+gns logs --path              # 只打印日志文件路径
 ```
 
 日志来源：macOS `~/Library/Logs/<label>.log`；Linux cron `~/.local/state/git-notes-sync/<label>.log`（systemd 模式自动走 `journalctl --user -u <label>`）；Windows `%LOCALAPPDATA%\git-notes-sync\<label>.log`。
 
-### `gns daemon` — 轻量常驻（Windows 首选）
+### `gns daemon` — 轻量常驻
 
 ```bash
 gns daemon              # 按 sync_interval（默认 600s = 10min）定时同步所有 repos
@@ -280,7 +281,7 @@ gns install -interval 600    # 改触发间隔（优先级：-interval > 配置 
 gns uninstall           # 停止并删除注册（macOS：bootout + 删 plist；Linux：disable + 删 unit / crontab 块；Windows：schtasks /Delete）
 ```
 
-**Windows（任务计划程序）**：用户级任务（`schtasks /Create`，无需管理员，登录后才运行——与 launchd Agent / systemd user unit 语义一致）。`-interval` 模式 = `/SC MINUTE`（最小 1 分钟，小于 60s 自动取 1）；`--daemon` 模式 = `/SC ONLOGON`（登录时启动常驻 daemon）。输出重定向到 `%LOCALAPPDATA%\git-notes-sync\<label>.log`。查看/管理：`schtasks /Query /TN <label>`、`taskschd.msc`（任务计划程序）。任务名 = `-label`（默认 `com.git-notes-sync`）。⚠️ 任务计划程序没有 keep-alive 机制（launchd KeepAlive / systemd Restart=always 的等价物）——daemon 崩溃后不会自动重启（ONLOGON 任务在下次登录时再跑）。
+**Windows（任务计划程序）**：用户级任务（`schtasks /Create`，无需管理员，登录后才运行——与 launchd Agent / systemd user unit 语义一致）。`-interval` 模式 = `/SC MINUTE`（最小 1 分钟，小于 60s 自动取 1）；`--daemon` 模式 = `/SC ONLOGON`（登录时启动常驻 daemon）。**后台不弹黑窗**（wscript + .vbe 实现，见 STATUS §2.4）。输出到 `%LOCALAPPDATA%\git-notes-sync\<label>.log`。查看/管理：`schtasks /Query /TN <label>`、`taskschd.msc`（任务计划程序）。任务名 = `-label`（默认 `com.git-notes-sync`）。⚠️ 任务计划程序没有 keep-alive 机制（launchd KeepAlive / systemd Restart=always 的等价物）——daemon 崩溃后不会自动重启（ONLOGON 任务在下次登录时再跑）。
 
 **macOS（launchd）**：plist 位于 `~/Library/LaunchAgents/<label>.plist`，日志在 `~/Library/Logs/<label>.log(.err.log)`。plist 自动包含：
 
@@ -349,6 +350,8 @@ gns help                # 命令帮助
 | `sync_interval` | `600` | daemon 轮询间隔（秒，最小 5，默认 600 = 10 分钟） |
 | `retry_attempts` | `3` | fetch/push 网络失败重试次数（2s/4s/8s 退避） |
 | `repos` | `[]` | daemon 遍历的仓库列表；为空则当前目录 |
+| `[log] max_size_kb` | `500` | 日志文件大小阈值（KB），超阈值自动轮转（切为 `<label>.log.1`） |
+| `[log] max_backups` | `1` | 保留的历史日志副本数（`.1` 最新）；`0` = 超阈值直接删 |
 | `[conflict] strategy` | `"preserve"` | 文本冲突：`preserve`（保留 markers 继续同步）\| `abort`（中止） |
 | `[conflict] text_extensions` | 见下 | 视为文本的扩展名列表，默认 `.md .markdown .txt`（需其他格式自行扩展） |
 | `[ai] type` | 空 | `api`（OpenAI 兼容接口）\| `command`（任意 CLI） |
@@ -375,6 +378,11 @@ ai_fallback = "timestamp"
 binary_strategy = "ours"
 sync_interval = 600
 retry_attempts = 3
+
+# 日志轮转（可选；仅对 --log 文件模式生效，systemd journal 模式由 journald 管理）
+# [log]
+# max_size_kb = 500      # 超阈值轮转（默认 500KB）
+# max_backups = 1        # 保留副本数（默认 1；0 = 超阈值直接删）
 
 # 多仓库列表（daemon / gns sync-all / gns sync <name> 使用）
 # 写法一：简单数组（显示名 = 路径）
@@ -471,21 +479,19 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.git-notes-sync.plist
 launchctl bootout gui/$(id -u)/com.git-notes-sync                                   # 卸载
 ```
 
-### Windows — daemon（首选）或任务计划程序
-
-**方式一：daemon**
+### Windows — `gns install` 一键（任务计划，无需管理员）
 
 ```bash
-gns daemon
+gns install                 # **推荐方式** 任务计划每分钟触发一次 gns sync-all（schtasks MINUTE，最小 1 分钟；interval 取 -interval > 配置 sync_interval > 默认 600s → */10）
+gns install --daemon        # ONLOGON 登录时启动常驻 gns daemon（节奏 = 配置 sync_interval）
+gns install --daemon -interval 300  # 说明：daemon 模式 interval 由配置控制，flag 无效
+gns uninstall               # schtasks /Delete + 删日志
 ```
 
-启动后每 600s（10 分钟）自动同步所有 `repos`。开机自启：将 `gns daemon` 放入「启动」文件夹或任务计划程序。异常退出后重启即恢复，无状态恢复逻辑。
+**⚙️ 隐藏窗口机制（重要）**：`gns install` 在任务计划里注册的是 `wscript.exe` 执行一个 `.vbe` 包装脚本（`%LOCALAPPDATA%\git-notes-sync\<label>.vbe`），由它隐藏窗口启动 `gns ... --log <日志>`——**必须经 wscript + vbe 方式，直接注册 `gns.exe` 到任务计划会在每次触发时弹黑色控制台窗口**。日志写入 `%LOCALAPPDATA%\git-notes-sync\<label>.log`，查看 `gns logs`。
 
-**方式二：任务计划程序**
-
-- 触发器：每 5 分钟 / 登录时
-- 操作：`gns.exe sync-all`（同步配置中所有 repos，无需设工作目录）；单仓库可用 `gns.exe sync` 并设置工作目录
-- ⚠️ 注意：任务计划程序的环境变量受限，SSH agent / credential helper 需保证可用
+- 凭证：任务计划**继承启动时登入用户的会话环境**，比 cron 的受限环境好；HTTPS 仓库仍建议 `credential.helper`（store / osxkeychain 均可）
+- ⚠️ 任务计划无 keep-alive：daemon 崩溃不会自动重启（对比 Linux systemd 的 `Restart=always`）
 
 ### daemon / cron 环境注意事项
 
