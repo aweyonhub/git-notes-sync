@@ -4,9 +4,10 @@ package service
 
 // Windows backend: Task Scheduler (schtasks.exe).
 //
-//   - ModeInterval: a per-user task fires `gns sync-all` every N minutes
-//     (schtasks granularity is 1 minute; sub-minute intervals are clamped to
-//     1). Output is redirected to a log file via cmd /c.
+//   - ModeInterval: a per-user task fires every N minutes (schtasks
+//     granularity is 1 minute; sub-minute intervals are clamped to 1). The
+//     task runs wscript.exe on a wrapper .vbe, which launches `gns sync-all`
+//     hidden (no console flash); gns writes its log via --log.
 //   - ModeDaemon: an ONLOGON task starts the resident `gns daemon`; the
 //     daemon's own sync_interval controls the cadence.
 //
@@ -64,15 +65,36 @@ func Install(o LaunchOptions) error {
 	if err := os.MkdirAll(o.LogDir, 0o755); err != nil {
 		return fmt.Errorf("create log dir %s: %w", o.LogDir, err)
 	}
-	return schtasks(taskCreateArgs(o)...)
+	// write the wrapper .vbe (wscript.exe runs it; it launches gns hidden so
+	// no console window flashes when the task fires)
+	vbePath := o.LogDir + `\` + o.Label + ".vbe"
+	if err := os.WriteFile(vbePath, []byte(taskVbeContent(o)), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", vbePath, err)
+	}
+	if err := schtasks(taskCreateArgs(o)...); err != nil {
+		return err
+	}
+	// kick off an immediate first run so the log file exists right away
+	// instead of waiting for the first scheduled tick
+	_ = schtasks("/Run", "/TN", taskName(o.Label))
+	return nil
 }
 
-// Uninstall removes the scheduled task.
+// Uninstall removes the scheduled task and the wrapper .vbe.
 func Uninstall(o LaunchOptions) error {
 	if err := validateLabel(o.Label); err != nil {
 		return err
 	}
-	return schtasks("/Delete", "/TN", taskName(o.Label), "/F")
+	if err := schtasks("/Delete", "/TN", taskName(o.Label), "/F"); err != nil {
+		return err
+	}
+	// best-effort: remove the wrapper .vbe (same log dir as install)
+	logDir := o.LogDir
+	if logDir == "" {
+		logDir = DefaultLogDir(o.Home)
+	}
+	_ = os.Remove(filepath.Join(logDir, o.Label+".vbe"))
+	return nil
 }
 
 // Loaded reports whether the task is registered.
@@ -92,4 +114,3 @@ func DefaultLogDir(home string) string {
 	}
 	return filepath.Join(home, "AppData", "Local", "git-notes-sync")
 }
-

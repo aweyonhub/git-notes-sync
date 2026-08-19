@@ -113,7 +113,7 @@ func TestCmdConfig_Get(t *testing.T) {
 }
 
 func TestCmdConfig_GetStringQuoted(t *testing.T) {
-	p := newCfgFile(t, `commit_message = "static"` + "\n")
+	p := newCfgFile(t, `commit_message = "static"`+"\n")
 	out := captureStdout(t, func() error {
 		return cmdConfig([]string{"get", "commit_message", "-c", p})
 	})

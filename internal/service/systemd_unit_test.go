@@ -115,8 +115,8 @@ func TestCronScheduleRanges(t *testing.T) {
 	}{
 		{30, "*/1 * * * *"},
 		{300, "*/5 * * * *"},
-		{7200, "0 */2 * * *"},  // 2h (e.g. config sync_interval=7200)
-		{3600, "0 */1 * * *"},  // 1h
+		{7200, "0 */2 * * *"}, // 2h (e.g. config sync_interval=7200)
+		{3600, "0 */1 * * *"}, // 1h
 		{23 * 3600, "0 */23 * * *"},
 		{24 * 3600, "0 0 * * *"}, // ≥24h → daily
 	}
@@ -132,7 +132,7 @@ func TestCronBlockDaemon(t *testing.T) {
 	o.Mode = ModeDaemon
 	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
 	lines := cronBlock(o)
-	if got := lines[1]; got != "@reboot /home/alice/.local/bin/gns daemon -c /home/alice/.config/git-notes-sync/config.toml" {
+	if got := lines[1]; got != "@reboot /home/alice/.local/bin/gns daemon -c /home/alice/.config/git-notes-sync/config.toml >> /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log 2>&1" {
 		t.Errorf("daemon cron line = %q", got)
 	}
 }

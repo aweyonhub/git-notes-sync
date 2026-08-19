@@ -83,7 +83,7 @@ func cronBlock(o LaunchOptions) []string {
 	var lines []string
 	lines = append(lines, cronMarkerOpen)
 	if o.Mode == ModeDaemon {
-		lines = append(lines, "@reboot "+o.Exe+" daemon -c "+o.Config)
+		lines = append(lines, "@reboot "+o.Exe+" daemon -c "+o.Config+" >> "+cronLogPath(o)+" 2>&1")
 	} else {
 		lines = append(lines, cronSchedule(o.Interval)+" "+o.Exe+" sync-all >> "+cronLogPath(o)+" 2>&1")
 	}

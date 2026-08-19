@@ -202,7 +202,26 @@ func installCron(o LaunchOptions) error {
 	if err := os.MkdirAll(o.LogDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", o.LogDir, err)
 	}
-	return crontabWrite(mergeCrontab(existing, cronBlock(o)))
+	if err := crontabWrite(mergeCrontab(existing, cronBlock(o))); err != nil {
+		return err
+	}
+	// kick off an immediate first run (interval mode) so the log exists
+	// right away instead of waiting for the first cron tick; daemon mode
+	// starts at the next reboot per @reboot semantics
+	if o.Mode == ModeInterval {
+		logFile, err := os.OpenFile(cronLogPath(o), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			return fmt.Errorf("first run: open log: %w", err)
+		}
+		defer logFile.Close()
+		cmd := exec.Command(o.Exe, "sync-all")
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("first run: %w", err)
+		}
+	}
+	return nil
 }
 
 func uninstallCron(o LaunchOptions) error {

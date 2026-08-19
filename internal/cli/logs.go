@@ -141,4 +141,3 @@ func cmdLogs(args []string) error {
 func logsUsageLine() string {
 	return "  gns logs [flags]       show scheduler logs (launchd / systemd / Task Scheduler)"
 }
-
