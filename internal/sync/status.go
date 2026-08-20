@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aweyonhub/git-notes-sync/internal/git"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
 )
 
 // Status renders a human-readable report for `gns status`.
-func Status(repo string) (string, error) {
-	g := git.NewRunner(repo)
+func Status(repo string, cfg *config.Config) (string, error) {
+	g := newRunner(repo, cfg)
 	if !g.IsRepo() {
 		return "", errors.New("not a git repository")
 	}
@@ -50,7 +50,7 @@ func Status(repo string) (string, error) {
 		}
 	}
 
-	conflicts, err := FindConflicts(repo)
+	conflicts, err := FindConflicts(repo, cfg)
 	if err != nil {
 		return "", err
 	}

@@ -308,10 +308,11 @@ func cmdStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := config.Load(cfgPath, dir); err != nil {
+	cfg, err := config.Load(cfgPath, dir)
+	if err != nil {
 		return err
 	}
-	out, err := sync.Status(dir)
+	out, err := sync.Status(dir, cfg)
 	if err != nil {
 		return err
 	}
@@ -344,7 +345,7 @@ func cmdResolve(args []string) error {
 	if err != nil {
 		return err
 	}
-	files, err := sync.FindConflicts(dir)
+	files, err := sync.FindConflicts(dir, cfg)
 	if err != nil {
 		return err
 	}

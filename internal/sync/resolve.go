@@ -22,8 +22,8 @@ type ConflictFile struct {
 }
 
 // FindConflicts lists files with conflict markers (committed or mid-merge).
-func FindConflicts(repo string) ([]ConflictFile, error) {
-	g := git.NewRunner(repo)
+func FindConflicts(repo string, cfg *config.Config) ([]ConflictFile, error) {
+	g := newRunner(repo, cfg)
 	seen := map[string]bool{}
 	var out []ConflictFile
 	add := func(p string, blocks int) {
@@ -32,19 +32,26 @@ func FindConflicts(repo string) ([]ConflictFile, error) {
 			out = append(out, ConflictFile{Path: p, Blocks: blocks})
 		}
 	}
-	if files, err := g.MarkerFiles(); err == nil {
-		for _, f := range files {
-			if content, err := os.ReadFile(filepath.Join(repo, f)); err == nil {
-				add(f, countMarkers(string(content)))
-			} else {
-				add(f, 0)
-			}
+	// MarkerFiles already maps "no matches" (grep exit 1) to nil, nil —
+	// any other error (e.g. a git timeout) must surface instead of being
+	// misreported as "no conflicts".
+	files, err := g.MarkerFiles()
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		if content, err := os.ReadFile(filepath.Join(repo, f)); err == nil {
+			add(f, countMarkers(string(content)))
+		} else {
+			add(f, 0)
 		}
 	}
-	if unmerged, err := g.Unmerged(); err == nil {
-		for _, p := range unmerged {
-			add(p, 0)
-		}
+	unmerged, err := g.Unmerged()
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range unmerged {
+		add(p, 0)
 	}
 	return out, nil
 }
@@ -55,10 +62,7 @@ func Resolve(repo, mode string, cfg *config.Config, gen *ai.Generator, logf func
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	g := git.NewRunner(repo)
-	if cfg.GitTimeoutSec > 0 {
-		g.Timeout = time.Duration(cfg.GitTimeoutSec) * time.Second
-	}
+	g := newRunner(repo, cfg)
 	gd, err := g.GitDir()
 	if err != nil {
 		return 0, fmt.Errorf("git dir: %w", err)
@@ -71,7 +75,7 @@ func Resolve(repo, mode string, cfg *config.Config, gen *ai.Generator, logf func
 	}
 	defer unlock()
 
-	files, err := FindConflicts(repo)
+	files, err := FindConflicts(repo, cfg)
 	if err != nil {
 		return 0, err
 	}

@@ -39,10 +39,7 @@ func Sync(repo string, cfg *config.Config, logf func(string, ...any)) *Report {
 	}
 	rep.out = logf
 
-	g := git.NewRunner(repo)
-	if cfg.GitTimeoutSec > 0 {
-		g.Timeout = time.Duration(cfg.GitTimeoutSec) * time.Second
-	}
+	g := newRunner(repo, cfg)
 	if !g.IsRepo() {
 		rep.Err = errors.New("not a git repository")
 		return rep

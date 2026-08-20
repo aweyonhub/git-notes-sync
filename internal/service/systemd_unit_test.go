@@ -24,8 +24,8 @@ func TestSystemdServiceInterval(t *testing.T) {
 		"[Service]",
 		"Type=oneshot",
 		"ExecStart=\"/home/alice/.local/bin/gns\" sync-all",
-		"Environment=PATH=/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin",
-		"Environment=HOME=/home/alice",
+		"Environment=\"PATH=/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin\"",
+		"Environment=\"HOME=/home/alice\"",
 		"[Install]",
 		"WantedBy=default.target",
 	} {
@@ -93,7 +93,7 @@ func TestCronBlockInterval(t *testing.T) {
 	lines := cronBlock(o)
 	want := []string{
 		cronMarkerOpen(o.Label),
-		"*/5 * * * * \"/home/alice/.local/bin/gns\" sync-all --log \"/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log\"",
+		"*/5 * * * * '/home/alice/.local/bin/gns' sync-all --log '/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log'",
 		cronMarkerClose(o.Label),
 	}
 	if len(lines) != len(want) {
@@ -110,7 +110,7 @@ func TestCronBlockIntervalWithConfig(t *testing.T) {
 	o := linuxTestOptions()
 	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
 	lines := cronBlock(o)
-	want := "*/5 * * * * \"/home/alice/.local/bin/gns\" sync-all -c \"/home/alice/.config/git-notes-sync/config.toml\" --log \"/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log\""
+	want := "*/5 * * * * '/home/alice/.local/bin/gns' sync-all -c '/home/alice/.config/git-notes-sync/config.toml' --log '/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log'"
 	if lines[1] != want {
 		t.Errorf("cron line = %q, want %q", lines[1], want)
 	}
@@ -131,10 +131,45 @@ func TestSystemdAndCronQuotePathsWithSpaces(t *testing.T) {
 	if !strings.Contains(svc, wantExec) {
 		t.Errorf("systemd ExecStart must quote spaced paths, got:\n%s", svc)
 	}
+	wantEnv := `Environment="PATH=/home/alice/my tools:/usr/local/bin:/usr/bin:/bin"`
+	if !strings.Contains(svc, wantEnv) {
+		t.Errorf("Environment PATH must be quoted, got:\n%s", svc)
+	}
 	cron := cronBlock(o)[1]
-	wantCron := `*/5 * * * * "/home/alice/my tools/gns" sync-all -c "/home/alice/my config/config.toml" --log "/home/alice/my logs/com.git-notes-sync.log"`
+	wantCron := `*/5 * * * * '/home/alice/my tools/gns' sync-all -c '/home/alice/my config/config.toml' --log '/home/alice/my logs/com.git-notes-sync.log'`
 	if cron != wantCron {
 		t.Errorf("cron line must quote spaced paths:\n got: %s\nwant: %s", cron, wantCron)
+	}
+}
+
+func TestCronAndSystemdQuoteSpecialChars(t *testing.T) {
+	in := `/home/al ice/we$ird\dir'%name`
+	cron := cronQuote(in)
+	wantCron := `'/home/al ice/we$ird\dir'\''%name'`
+	if cron != wantCron {
+		t.Errorf("cronQuote(%q) = %q, want %q", in, cron, wantCron)
+	}
+	sd := systemdQuote(in)
+	wantSD := `"/home/al ice/we$$ird\\dir'%%name"`
+	if sd != wantSD {
+		t.Errorf("systemdQuote(%q) = %q, want %q", in, sd, wantSD)
+	}
+}
+
+func TestSystemdEnvironmentKeepsSingleDollar(t *testing.T) {
+	// Environment= does not perform variable expansion: a literal $ stays
+	// single, while ExecStart= doubles it ($$).
+	o := linuxTestOptions()
+	o.Exe = "/home/al$ice/bin/gns"
+	o.Home = "/home/al$ice"
+	got := systemdService(o)
+	wantHome := `Environment="HOME=/home/al$ice"`
+	if !strings.Contains(got, wantHome) {
+		t.Errorf("Environment HOME must keep a single $, got:\n%s", got)
+	}
+	wantExec := `ExecStart="/home/al$$ice/bin/gns" sync-all`
+	if !strings.Contains(got, wantExec) {
+		t.Errorf("ExecStart must double $, got:\n%s", got)
 	}
 }
 
@@ -174,7 +209,7 @@ func TestCronBlockDaemon(t *testing.T) {
 	o.Mode = ModeDaemon
 	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
 	lines := cronBlock(o)
-	if got := lines[1]; got != "@reboot \"/home/alice/.local/bin/gns\" daemon -c \"/home/alice/.config/git-notes-sync/config.toml\" --log \"/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log\"" {
+	if got := lines[1]; got != "@reboot '/home/alice/.local/bin/gns' daemon -c '/home/alice/.config/git-notes-sync/config.toml' --log '/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log'" {
 		t.Errorf("daemon cron line = %q", got)
 	}
 }

@@ -83,6 +83,13 @@ func (r *Runner) run(args ...string) (string, string, error) {
 	if len(r.Env) > 0 {
 		cmd.Env = append(os.Environ(), r.Env...)
 	}
+	// After the process is killed (timeout) or exits, an orphaned
+	// grandchild (ssh, credential helper) may still hold the output pipes —
+	// without WaitDelay, Wait blocks until it exits, re-hanging the caller.
+	// WaitDelay closes the pipes and returns ErrWaitDelay after the bound.
+	// (Modern git redirects its background gc output to gc.log, so lingering
+	// pipes on successful commands are not expected.)
+	cmd.WaitDelay = 5 * time.Second
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

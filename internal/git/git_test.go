@@ -86,7 +86,11 @@ func fakeSleepingGit(t *testing.T) string {
 			t.Fatal(err)
 		}
 	} else {
-		if err := os.WriteFile(filepath.Join(dir, "git"), []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+		// `exec` replaces the shell with sleep, so the kill lands on the
+		// sleeper itself (no orphaned grandchild holding the pipes — the
+		// scenario WaitDelay guards against in production). A 30s sleep
+		// proves the deadline interrupts it rather than waiting it out.
+		if err := os.WriteFile(filepath.Join(dir, "git"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

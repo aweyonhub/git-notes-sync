@@ -120,6 +120,10 @@ func Cleanup(path string, maxBackups int) error {
 // stream). The file is then reopened and the fresh append handle returned;
 // the caller re-points os.Stdout/os.Stderr at it. The caller's old handles
 // are always closed, even on error.
+//
+// Contract: the returned file is non-nil whenever the new log opened
+// successfully; the error may then carry only rotate/cleanup warnings.
+// Callers MUST adopt the returned file before inspecting the error.
 func RotateAndReopen(path string, maxSizeKB, maxBackups int, handles ...*os.File) (*os.File, error) {
 	for _, h := range handles {
 		if h != nil {

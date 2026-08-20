@@ -442,7 +442,6 @@ func TestResolveRespectsLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer unlock()
 
 	// lock held: resolve must refuse, not collide with the running "sync"
 	gen := newAIGen(nil)
@@ -461,5 +460,84 @@ func TestResolveRespectsLock(t *testing.T) {
 	}
 	if got := readFile(t, b, "note.md"); got != "A\n" {
 		t.Fatalf("unexpected content after resolve: %q", got)
+	}
+}
+
+// TestSyncAutocrlfInherited covers the CRLF path driven by the environment's
+// global git config: the windows-test CI job sets core.autocrlf=true
+// globally; ubuntu/dev machines usually have it unset. Unlike every other
+// test, this one deliberately does NOT pin core.autocrlf — the clones and
+// repos inherit the global setting (do not add -c or a repo config here:
+// that would silently disable the scenario). The test queries the effective
+// setting and branches its blob line-ending expectation accordingly, so it
+// stays deterministic everywhere:
+//
+//	true / input → CRLF worktree, blobs normalized to LF
+//	unset / false → CRLF kept in blobs (no conversion)
+func TestSyncAutocrlfInherited(t *testing.T) {
+	tmp := t.TempDir()
+	remote := filepath.Join(tmp, "remote.git")
+	gitInitBare(t, remote)
+	a := filepath.Join(tmp, "a")
+	b := filepath.Join(tmp, "b")
+
+	// clone WITHOUT any autocrlf pin so the environment's global applies
+	cloneNoPin := func(dst string) {
+		t.Helper()
+		gitCmd(t, filepath.Dir(dst), "clone", remote, filepath.Base(dst))
+		gitCmd(t, dst, "config", "user.name", "test")
+		gitCmd(t, dst, "config", "user.email", "test@example.com")
+		gitCmd(t, dst, "config", "pull.rebase", "false")
+	}
+
+	cloneNoPin(a)
+	writeFile(t, a, "note.md", "line1\n")
+	gitCommitAll(t, a, "init")
+	gitPush(t, a)
+
+	cloneNoPin(b)
+	cfg := newTestConfig()
+
+	// which branch is actually in effect?
+	eff := gitCmdAllowFail(t, b, "config", "--get", "core.autocrlf")
+	wantLFBlob := eff == "true" || eff == "input"
+
+	// conflict setup: a edits with LF; b edits with CRLF (Windows editor)
+	writeFile(t, a, "note.md", "line1\nA-change\n")
+	gitCommitAll(t, a, "a change")
+	gitPush(t, a)
+
+	writeFile(t, b, "note.md", "line1\r\nB-change\r\n")
+	rep := Sync(b, cfg, nil)
+	if rep.Err != nil {
+		t.Fatalf("sync: %v", rep.Err)
+	}
+
+	// the blob line-ending expectation proves which branch ran
+	blob := gitCmd(t, b, "show", "HEAD:note.md")
+	if wantLFBlob && strings.Contains(blob, "\r") {
+		t.Fatalf("effective autocrlf=%q: blob should be LF-normalized, got %q", eff, blob)
+	}
+	if !wantLFBlob && !strings.Contains(blob, "\r") {
+		t.Fatalf("effective autocrlf=%q: blob should keep CRLF, got %q", eff, blob)
+	}
+
+	// conflict preserved, resolve --theirs converges the remote
+	if got := readFile(t, b, "note.md"); !strings.Contains(got, "<<<<<<<") {
+		t.Fatalf("expected preserved markers, got %q", got)
+	}
+	n, err := Resolve(b, "theirs", cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 file resolved, got %d", n)
+	}
+	if got := readFile(t, b, "note.md"); strings.Contains(got, "<<<<<<<") || !strings.Contains(got, "A-change") {
+		t.Fatalf("unexpected content after resolve: %q", got)
+	}
+	gitCmd(t, a, "pull", "--no-edit")
+	if got := readFile(t, a, "note.md"); !strings.Contains(got, "A-change") {
+		t.Fatalf("remote should converge, got %q", got)
 	}
 }

@@ -69,11 +69,17 @@ func Run(globalPath string, once bool) error {
 		// and re-points the process output at the fresh file.
 		if lp := os.Getenv("GNS_LOG_FILE"); lp != "" {
 			f, err := logPkg.RotateAndReopen(lp, cfg.Log.MaxSizeKB, cfg.Log.MaxBackups, os.Stdout, os.Stderr)
-			if err != nil {
-				logf("log rotate: %v", err)
-			} else {
+			// Adopt the new handle whenever it opened: RotateAndReopen may
+			// return a valid file together with rotate/cleanup warnings, and
+			// the old handles are already closed by then. Failing to adopt
+			// would leak the handle and leave the daemon writing to closed
+			// files — permanently silent.
+			if f != nil {
 				os.Stdout = f
 				os.Stderr = f
+			}
+			if err != nil {
+				logf("log rotate: %v", err)
 			}
 		}
 

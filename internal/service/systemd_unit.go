@@ -24,20 +24,20 @@ func systemdService(o LaunchOptions) string {
 	if o.Mode == ModeDaemon {
 		b.WriteString("[Service]\n")
 		b.WriteString("Type=simple\n")
-		b.WriteString("ExecStart=" + shQuote(o.Exe) + " daemon -c " + shQuote(o.Config) + "\n")
+		b.WriteString("ExecStart=" + systemdQuote(o.Exe) + " daemon -c " + systemdQuote(o.Config) + "\n")
 		b.WriteString("Restart=always\n")
 		b.WriteString("RestartSec=10\n")
 	} else {
-		exec := shQuote(o.Exe) + " sync-all"
+		exec := systemdQuote(o.Exe) + " sync-all"
 		if o.Config != "" {
-			exec += " -c " + shQuote(o.Config)
+			exec += " -c " + systemdQuote(o.Config)
 		}
 		b.WriteString("[Service]\n")
 		b.WriteString("Type=oneshot\n")
 		b.WriteString("ExecStart=" + exec + "\n")
 	}
-	b.WriteString("Environment=PATH=" + o.ExeDir() + ":/usr/local/bin:/usr/bin:/bin\n")
-	b.WriteString("Environment=HOME=" + homeDir(o.Home) + "\n\n")
+	b.WriteString("Environment=\"PATH=" + systemdValueEscape(o.ExeDir()+":/usr/local/bin:/usr/bin:/bin") + "\"\n")
+	b.WriteString("Environment=\"HOME=" + systemdValueEscape(homeDir(o.Home)) + "\"\n\n")
 
 	b.WriteString("[Install]\n")
 	b.WriteString("WantedBy=default.target\n")
@@ -67,9 +67,35 @@ func modeWord(o LaunchOptions) string {
 	return "sync"
 }
 
-// shQuote wraps a path in double quotes so command lines survive spaces.
-// systemd's ExecStart= and cron (sh) both accept double-quoted tokens.
-func shQuote(s string) string { return `"` + s + `"` }
+// cronQuote wraps a path for a crontab line, which cron runs via POSIX sh.
+// Single quotes disable every shell metacharacter ($, backtick, $(...),
+// quotes, backslash); an embedded single quote is re-escaped as '\”.
+func cronQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// systemdValueEscape escapes a value for systemd unit directives that do
+// NOT perform variable expansion (Environment=): backslash and double quote
+// are special inside quotes, and % (unit specifiers) must be doubled. A
+// literal $ stays as-is — Environment= does not expand variables.
+func systemdValueEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `%`, `%%`)
+	return s
+}
+
+// systemdExecEscape additionally doubles $, which ExecStart= interprets as
+// variable expansion ($$ passes a literal dollar sign).
+func systemdExecEscape(s string) string {
+	return strings.ReplaceAll(systemdValueEscape(s), `$`, `$$`)
+}
+
+// systemdQuote wraps a path for systemd ExecStart= in double quotes so
+// whitespace groups into one argument, with full exec escaping inside.
+func systemdQuote(s string) string {
+	return `"` + systemdExecEscape(s) + `"`
+}
 
 // cronLogPath is where crontab entries redirect output (systemd units use the
 // journal instead).
@@ -96,13 +122,13 @@ func cronBlock(o LaunchOptions) []string {
 	var lines []string
 	lines = append(lines, cronMarkerOpen(o.Label))
 	if o.Mode == ModeDaemon {
-		lines = append(lines, "@reboot "+shQuote(o.Exe)+" daemon -c "+shQuote(o.Config)+" --log "+shQuote(cronLogPath(o)))
+		lines = append(lines, "@reboot "+cronQuote(o.Exe)+" daemon -c "+cronQuote(o.Config)+" --log "+cronQuote(cronLogPath(o)))
 	} else {
-		cmd := shQuote(o.Exe) + " sync-all"
+		cmd := cronQuote(o.Exe) + " sync-all"
 		if o.Config != "" {
-			cmd += " -c " + shQuote(o.Config)
+			cmd += " -c " + cronQuote(o.Config)
 		}
-		lines = append(lines, cronSchedule(o.Interval)+" "+cmd+" --log "+shQuote(cronLogPath(o)))
+		lines = append(lines, cronSchedule(o.Interval)+" "+cmd+" --log "+cronQuote(cronLogPath(o)))
 	}
 	lines = append(lines, cronMarkerClose(o.Label))
 	return lines
