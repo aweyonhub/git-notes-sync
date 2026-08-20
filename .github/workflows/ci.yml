@@ -21,6 +21,10 @@ jobs:
         run: go test ./...
       - name: Vet
         run: go vet ./...
+      - name: genversion consistency
+        run: |
+          go run ./scripts/genversion
+          git diff --exit-code -- internal/version/version.go
 
   npm-install:
     # STOPGAP: verify the platform-split install chain locally (sub-package tgz

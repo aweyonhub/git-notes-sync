@@ -228,6 +228,12 @@ func Load(explicit string, repoDir string) (*Config, error) {
 	if err := MergeRepo(cfg, repoDir); err != nil {
 		return nil, err
 	}
+	// validate runs on every load (not just when a repo-level config exists),
+	// so a typo like commit_message="timesamp" surfaces immediately instead
+	// of silently falling through to a default branch.
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 
@@ -243,7 +249,7 @@ func MergeRepo(cfg *Config, repoDir string) error {
 	if _, err := toml.DecodeFile(p, cfg); err != nil {
 		return fmt.Errorf("config %s: %w", p, err)
 	}
-	return cfg.validate()
+	return nil
 }
 
 func (c *Config) validate() error {

@@ -55,6 +55,22 @@ func TestTaskVbeContentInterval(t *testing.T) {
 	}
 }
 
+func TestTaskVbeContentIntervalWithConfig(t *testing.T) {
+	o := LaunchOptions{
+		Label:    "com.git-notes-sync",
+		Exe:      `C:\Program Files\git-notes-sync\gns.exe`,
+		Mode:     ModeInterval,
+		Interval: 600,
+		Config:   `C:\Users\me\.config\git-notes-sync\config.toml`,
+		LogDir:   `C:\Users\me\AppData\Local\git-notes-sync`,
+	}
+	got := taskVbeContent(o)
+	want := `""C:\Program Files\git-notes-sync\gns.exe"" sync-all -c ""C:\Users\me\.config\git-notes-sync\config.toml"" --log ""C:\Users\me\AppData\Local\git-notes-sync\com.git-notes-sync.log""`
+	if !strings.Contains(got, want) {
+		t.Errorf("taskVbeContent interval with config missing %q:\n%s", want, got)
+	}
+}
+
 func TestTaskVbeContentDaemon(t *testing.T) {
 	o := LaunchOptions{
 		Label:  "com.git-notes-sync",

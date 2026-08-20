@@ -28,9 +28,13 @@ func systemdService(o LaunchOptions) string {
 		b.WriteString("Restart=always\n")
 		b.WriteString("RestartSec=10\n")
 	} else {
+		exec := o.Exe + " sync-all"
+		if o.Config != "" {
+			exec += " -c " + o.Config
+		}
 		b.WriteString("[Service]\n")
 		b.WriteString("Type=oneshot\n")
-		b.WriteString("ExecStart=" + o.Exe + " sync-all\n")
+		b.WriteString("ExecStart=" + exec + "\n")
 	}
 	b.WriteString("Environment=PATH=" + o.ExeDir() + ":/usr/local/bin:/usr/bin:/bin\n")
 	b.WriteString("Environment=HOME=" + homeDir(o.Home) + "\n\n")
@@ -90,7 +94,11 @@ func cronBlock(o LaunchOptions) []string {
 	if o.Mode == ModeDaemon {
 		lines = append(lines, "@reboot "+o.Exe+" daemon -c "+o.Config+" --log "+cronLogPath(o))
 	} else {
-		lines = append(lines, cronSchedule(o.Interval)+" "+o.Exe+" sync-all --log "+cronLogPath(o))
+		cmd := o.Exe + " sync-all"
+		if o.Config != "" {
+			cmd += " -c " + o.Config
+		}
+		lines = append(lines, cronSchedule(o.Interval)+" "+cmd+" --log "+cronLogPath(o))
 	}
 	lines = append(lines, cronMarkerClose(o.Label))
 	return lines

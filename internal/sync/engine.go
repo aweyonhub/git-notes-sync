@@ -19,16 +19,13 @@ import (
 
 // Report describes what a sync run did; Err is non-nil when the repo failed.
 type Report struct {
-	Steps []string
-	Err   error
-	out   func(string, ...any) // optional live sink; nil-safe
+	Err error
+	out func(string, ...any) // optional live sink; nil-safe
 }
 
-// logf records a step and, when a live sink is set, forwards it there too —
-// callers print live via the sink and must not re-print Steps (no duplication).
+// logf forwards a step to the live sink when one is set (nil is fine).
+// Callers print live via the sink; there is no buffered step list.
 func (r *Report) logf(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	r.Steps = append(r.Steps, msg)
 	if r.out != nil {
 		r.out(format, args...)
 	}

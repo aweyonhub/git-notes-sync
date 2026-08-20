@@ -11,6 +11,7 @@ import (
 	"github.com/aweyonhub/git-notes-sync/internal/ai"
 	"github.com/aweyonhub/git-notes-sync/internal/config"
 	"github.com/aweyonhub/git-notes-sync/internal/git"
+	"github.com/aweyonhub/git-notes-sync/internal/lock"
 	"github.com/aweyonhub/git-notes-sync/internal/retry"
 )
 
@@ -54,6 +55,19 @@ func Resolve(repo, mode string, cfg *config.Config, gen *ai.Generator, logf func
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	g := git.NewRunner(repo)
+	gd, err := g.GitDir()
+	if err != nil {
+		return 0, fmt.Errorf("git dir: %w", err)
+	}
+	// resolve mutates the repo (rewrite → commit → push), so it takes the
+	// same lock as the sync engine to avoid colliding with a running tick.
+	unlock, err := lock.Acquire(gd)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+
 	files, err := FindConflicts(repo)
 	if err != nil {
 		return 0, err
@@ -61,7 +75,6 @@ func Resolve(repo, mode string, cfg *config.Config, gen *ai.Generator, logf func
 	if len(files) == 0 {
 		return 0, nil
 	}
-	g := git.NewRunner(repo)
 	resolved := 0
 	for _, f := range files {
 		path := filepath.Join(repo, f.Path)

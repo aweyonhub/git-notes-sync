@@ -90,6 +90,9 @@ func buildPlist(o LaunchOptions) string {
 		}
 	} else {
 		writeArrayString(&b, o.Exe, "sync-all")
+		if o.Config != "" {
+			writeArrayString(&b, "-c", o.Config)
+		}
 	}
 	writeArrayString(&b, "--log", o.logPath(".log"))
 	b.WriteString("\t</array>\n")

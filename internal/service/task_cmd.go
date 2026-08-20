@@ -29,7 +29,11 @@ func taskVbeContent(o LaunchOptions) string {
 	logPath := o.LogDir + `\` + o.Label + ".log"
 	var cmd string
 	if o.Mode == ModeInterval {
-		cmd = `"` + o.Exe + `" sync-all --log "` + logPath + `"`
+		cmd = `"` + o.Exe + `" sync-all`
+		if o.Config != "" {
+			cmd += ` -c "` + o.Config + `"`
+		}
+		cmd += ` --log "` + logPath + `"`
 	} else {
 		cmd = `"` + o.Exe + `" daemon -c "` + o.Config + `" --log "` + logPath + `"`
 	}

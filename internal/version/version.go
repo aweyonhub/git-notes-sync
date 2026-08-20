@@ -1,5 +1,7 @@
 package version
 
+//go:generate go run ../../scripts/genversion
+
 // Version is the default build version; the build pipeline injects the real
 // value via -ldflags (see Makefile / CI). The default is generated from
 // package.json by scripts/genversion (go generate ./internal/version), so

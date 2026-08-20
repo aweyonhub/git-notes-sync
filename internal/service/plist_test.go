@@ -51,6 +51,21 @@ func TestBuildPlistInterval(t *testing.T) {
 	}
 }
 
+func TestBuildPlistIntervalWithConfig(t *testing.T) {
+	o := testOptions()
+	o.Config = "/Users/alice/.config/git-notes-sync/config.toml"
+	got := buildPlist(o)
+	for _, want := range []string{
+		"<string>sync-all</string>",
+		"<string>-c</string>",
+		"<string>/Users/alice/.config/git-notes-sync/config.toml</string>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plist missing %q\n--- plist ---\n%s", want, got)
+		}
+	}
+}
+
 func TestBuildPlistDaemon(t *testing.T) {
 	o := testOptions()
 	o.Mode = ModeDaemon

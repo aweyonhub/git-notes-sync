@@ -86,6 +86,42 @@ path = "~/notes"
 	}
 }
 
+func TestLoadValidatesWithoutRepoConfig(t *testing.T) {
+	// a typo in the global config must surface even when no repo-level
+	// .notes-sync.toml exists (previously validation only ran via MergeRepo)
+	p := writeTemp(t, `commit_message = "timesamp"`)
+	if _, err := Load(p, ""); err == nil || !strings.Contains(err.Error(), "commit_message") {
+		t.Fatalf("Load should validate global config, got %v", err)
+	}
+
+	// repoDir set but no .notes-sync.toml present → still validated
+	dir := t.TempDir()
+	if _, err := Load(p, dir); err == nil || !strings.Contains(err.Error(), "commit_message") {
+		t.Fatalf("Load should validate with repoDir but no repo config, got %v", err)
+	}
+}
+
+func TestValidateClamps(t *testing.T) {
+	p := writeTemp(t, `sync_interval = 2
+retry_attempts = 0
+commit_debounce = 10
+commit_max_wait = 5
+`)
+	cfg, err := Load(p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SyncInterval != 5 {
+		t.Errorf("sync_interval should clamp to 5, got %d", cfg.SyncInterval)
+	}
+	if cfg.RetryAttempts != 1 {
+		t.Errorf("retry_attempts should clamp to 1, got %d", cfg.RetryAttempts)
+	}
+	if cfg.CommitMaxWait != cfg.CommitDebounce {
+		t.Errorf("commit_max_wait should clamp to commit_debounce (10), got %d", cfg.CommitMaxWait)
+	}
+}
+
 func TestExpandPath(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	// "/abs/p" starts with "/" — expandPath preserves it as-is on all

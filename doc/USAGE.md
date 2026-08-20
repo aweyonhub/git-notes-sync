@@ -567,7 +567,7 @@ type = "command"
 command = "codex exec --format openai ..."   # 或 ollama run qwen2.5 / 自定义程序
 ```
 
-约定：**stdin = git diff（或待解决冲突文件内容），stdout = 提交信息（或解决结果）**。退出码非 0 或超时视为失败。
+约定：**stdin = git diff（或待解决冲突文件内容），stdout = 提交信息（或解决结果）**。退出码非 0 或超时视为失败。存在 system 指令 / 仓库级 `AGENTS.md` 时，stdin 实际为 `### Instructions`（指令）+ `### Input`（diff/冲突内容）两段拼接——自定义脚本若严格按原始 diff 解析需注意。
 
 ### 6.4 Agent 指令文件
 
@@ -620,7 +620,8 @@ gns resolve --ai        # AI 语义合并（建议人工复核）
 | `merge origin/main failed: Your local changes ... would be overwritten` | `auto_commit=false` 且工作区有未提交修改与远端冲突。`gns commit` 或 stash 后重试 |
 | `push rejected (fetch first)` | 远端在你 fetch 后又更新。工具已自动重 fetch + 重 merge 重试（≤3 轮）；若仍失败说明远端持续移动，手动处理 |
 | `git is in MERGE_HEAD state` | 存在未完成的 merge/rebase（可能来自其他工具）。先手动完成或 `git merge --abort` |
-| `another sync is running (lock: ...)` | 上一次同步未正常结束。锁 10 分钟自动过期；也可删除 `.git/git-notes-sync.lock` |
+| `another sync is running (lock: ...)` | `gns sync` / `gns resolve` 互斥：另一实例正在操作同一仓库。锁 10 分钟自动过期；也可删除 `.git/git-notes-sync.lock` |
+| `gns resolve` 推送被拒（远端又变动） | resolve 不做自动重试；跑一次 `gns sync` 走完整引擎链路（re-fetch + re-merge + push）补齐即可 |
 | AI 未生效 | 检查 `commit_message = "ai"`、`[ai] type` 已配置、`api_key_env` 指向的环境变量已导出 |
 | `commit` 报 "Please tell me who you are" | 未配置 git 身份：`git config --global user.name/email` |
 | 与 Obsidian Git 插件冲突？ | 不冲突。本工具在系统层操作 Git，不介入编辑器进程，可共存或互补 |

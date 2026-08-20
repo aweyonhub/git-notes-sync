@@ -38,6 +38,16 @@ func TestSystemdServiceInterval(t *testing.T) {
 	}
 }
 
+func TestSystemdServiceIntervalWithConfig(t *testing.T) {
+	o := linuxTestOptions()
+	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
+	got := systemdService(o)
+	want := "ExecStart=/home/alice/.local/bin/gns sync-all -c /home/alice/.config/git-notes-sync/config.toml"
+	if !strings.Contains(got, want) {
+		t.Errorf("interval unit missing %q\n---\n%s", want, got)
+	}
+}
+
 func TestSystemdServiceDaemon(t *testing.T) {
 	o := linuxTestOptions()
 	o.Mode = ModeDaemon
@@ -93,6 +103,16 @@ func TestCronBlockInterval(t *testing.T) {
 		if lines[i] != want[i] {
 			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
 		}
+	}
+}
+
+func TestCronBlockIntervalWithConfig(t *testing.T) {
+	o := linuxTestOptions()
+	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
+	lines := cronBlock(o)
+	want := "*/5 * * * * /home/alice/.local/bin/gns sync-all -c /home/alice/.config/git-notes-sync/config.toml --log /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log"
+	if lines[1] != want {
+		t.Errorf("cron line = %q, want %q", lines[1], want)
 	}
 }
 

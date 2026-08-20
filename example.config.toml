@@ -12,6 +12,7 @@ commit_debounce = 60          # skip commit while the newest change is younger
                               # than N seconds (avoids interrupting edits)
 commit_max_wait = 300         # force commit N seconds after a change was first
                               # seen, even if the file keeps changing
+                              # (values < commit_debounce are clamped to it)
 
 # 提交信息模式（三种模式均附带 git diff 摘要：文件列表 + 行数增减）：
 #   timestamp — 首行时间戳，可追溯，默认：
@@ -46,7 +47,9 @@ type = "api"
 base_url = "https://api.example.com/v1"
 model = "model-name"
 api_key_env = "NOTES_AI_API_KEY"   # key read from this environment variable
-# command mode: any CLI, stdin = diff / conflicted file, stdout = result
+# command mode: any CLI, stdin = diff / conflicted file, stdout = result;
+#               when system instructions / AGENTS.md exist, stdin is wrapped
+#               as "### Instructions" + "### Input" sections
 # type = "command"
 # command = "codex exec --format openai ..."
 timeout = 60                  # seconds
@@ -55,8 +58,11 @@ agent_file = "AGENTS.md"      # repo-relative agent instructions file, sent
                               # with the diff (default AGENTS.md; missing = ignored)
 
 # ---- daemon (global config only) ---------------------------------------
-sync_interval = 600           # seconds between ticks (default 600 = 10min); also the default interval for `gns install` (explicit -interval wins)
-retry_attempts = 3            # fetch/push retries (exponential backoff)
+sync_interval = 600           # seconds between ticks (default 600 = 10min; min 5s,
+                              # smaller values are clamped to 5); also the default
+                              # interval for `gns install` (explicit -interval wins)
+retry_attempts = 3            # fetch/push retries (exponential backoff;
+                              # values < 1 are clamped to 1)
 
 # 多仓库列表（daemon / gns sync-all 使用；两种写法等价）：
 # 写法一：简单数组（显示名 = 路径）

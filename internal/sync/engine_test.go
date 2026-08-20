@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/lock"
 )
 
 // ---------- helpers: real git fixtures ----------
@@ -421,5 +422,44 @@ func TestStatusRenameReportsNewPath(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("Status did not report the rename destination: %+v", entries)
+	}
+}
+
+func TestResolveRespectsLock(t *testing.T) {
+	_, _, b := setupRemote(t)
+	cfg := newTestConfig()
+
+	// fabricate a committed marker block (no merge needed for this test)
+	writeFile(t, b, "note.md", "<<<<<<< HEAD\nA\n=======\nB\n>>>>>>> x\n")
+	gitCommitAll(t, b, "manual conflict")
+
+	g := newGitRunner(b)
+	gd, err := g.GitDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lock.Acquire(gd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	// lock held: resolve must refuse, not collide with the running "sync"
+	gen := newAIGen(nil)
+	if _, err := Resolve(b, "ours", cfg, gen, nil); err == nil || !strings.Contains(err.Error(), "another sync is running") {
+		t.Fatalf("Resolve with held lock = %v, want lock error", err)
+	}
+
+	// lock released: resolve proceeds normally
+	unlock()
+	n, err := Resolve(b, "ours", cfg, gen, nil)
+	if err != nil {
+		t.Fatalf("resolve after unlock: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 resolved, got %d", n)
+	}
+	if got := readFile(t, b, "note.md"); got != "A\n" {
+		t.Fatalf("unexpected content after resolve: %q", got)
 	}
 }

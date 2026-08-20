@@ -79,7 +79,9 @@ model = "model-name"
 api_key_env = "NOTES_AI_API_KEY"
 agent_file = "AGENTS.md"      # 仓库级 agent 指令文件，随 diff 发给 AI（默认）
 # type = "command"
-# command = "codex exec ..."  # stdin = diff，stdout = commit message
+# command = "codex exec ..."  # stdin = diff（存在 system 指令/AGENTS.md 时
+#                             以 "### Instructions" + "### Input" 两段包裹），
+#                             stdout = commit message
 ```
 
 ## 行为要点

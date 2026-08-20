@@ -45,7 +45,7 @@
 | 同步引擎 | commit → fetch → merge(非 rebase) → push；merge 中保护未提交内容；push 被拒自动重 fetch+重 merge（≤3 轮）；retry 指数退避；lock 防并发；merge/rebase 状态检测 | ✅ 集成测试 |
 | 冲突处理 | 文本冲突保留 markers → git add → merge commit → push；二进制按 `binary_strategy` 保留本地副本或中止；text/binary 按扩展名 + NUL 嗅探判定 | ✅ 集成测试 |
 | 提交管理 | debounce 推迟 + max_wait 强制兜底 + state 持久化；timestamp/static 模式带 diff 摘要（文件列表+行数）；批量提交 | ✅ 集成测试 |
-| AI 集成 | OpenAI-compatible API + 任意 CLI 双后端；stdin=diff / stdout=message；diff 截断 50KB；任何故障 fallback（`ai_fallback`） | ✅ fallback 测试 |
+| AI 集成 | OpenAI-compatible API + 任意 CLI 双后端；stdin=diff（system/AGENTS.md 以 `### Instructions` 段包裹）/ stdout=message；diff 截断 50KB；任何故障 fallback（`ai_fallback`） | ✅ fallback 测试 |
 | resolve | 双路检测冲突文件（`git grep` markers + `ls-files -u`）；`--ours/--theirs/--ai`；解决后 commit + push；CRLF 兼容 | ✅ 集成测试 |
 | status | 仓库/分支/upstream/ahead-behind/工作区变更/冲突列表 | ✅ 冒烟 |
 | daemon | 轻量 timer（默认 600s = 10min）；配置 mtime 变更热重载；多仓库 `repos` 遍历；`--once` 单次 | ✅ 冒烟 |

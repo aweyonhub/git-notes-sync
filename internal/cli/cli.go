@@ -734,10 +734,9 @@ func cmdInstall(args []string) error {
 	}
 
 	mode := service.ModeInterval
-	cfgPath := ""
+	cfgPath := config.GlobalPath() // resolved at install time (honors GNS_CONFIG)
 	if daemonMode {
 		mode = service.ModeDaemon
-		cfgPath = config.GlobalPath()
 	}
 	// interval resolution: explicit -interval > global config sync_interval > 600s
 	interval = resolveInterval(interval, cfgPath)
@@ -766,7 +765,7 @@ func cmdInstall(args []string) error {
 		return err
 	}
 
-	modeDesc := fmt.Sprintf("interval: every %ds, runs `gns sync-all` (stateless)", interval)
+	modeDesc := fmt.Sprintf("interval: every %ds, runs `gns sync-all -c %s` (stateless)", interval, cfgPath)
 	if daemonMode {
 		modeDesc = fmt.Sprintf("daemon: resident `gns daemon -c %s` (cadence = sync_interval config)", cfgPath)
 	}

@@ -34,7 +34,7 @@ func Acquire(gitDir string) (func(), error) {
 			os.Remove(path)
 			continue
 		}
-		return nil, fmt.Errorf("another sync is running (lock: %s)", path)
+		return nil, fmt.Errorf("another sync is running (lock: %s; stale locks expire after 10 min)", path)
 	}
 	return nil, errors.New("could not acquire lock")
 }
