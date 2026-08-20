@@ -21,10 +21,17 @@ import (
 type Report struct {
 	Steps []string
 	Err   error
+	out   func(string, ...any) // optional live sink; nil-safe
 }
 
+// logf records a step and, when a live sink is set, forwards it there too —
+// callers print live via the sink and must not re-print Steps (no duplication).
 func (r *Report) logf(format string, args ...any) {
-	r.Steps = append(r.Steps, fmt.Sprintf(format, args...))
+	msg := fmt.Sprintf(format, args...)
+	r.Steps = append(r.Steps, msg)
+	if r.out != nil {
+		r.out(format, args...)
+	}
 }
 
 // Sync runs the full sync flow for one repository.
@@ -33,6 +40,7 @@ func Sync(repo string, cfg *config.Config, logf func(string, ...any)) *Report {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	rep.out = logf
 
 	g := git.NewRunner(repo)
 	if !g.IsRepo() {

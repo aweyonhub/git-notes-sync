@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Runner executes git commands inside a working directory.
@@ -193,9 +194,10 @@ func (r *Runner) Status() ([]Entry, error) {
 		xy := f[:2]
 		path := f[3:]
 		if (xy[0] == 'R' || xy[0] == 'C' || xy[1] == 'R' || xy[1] == 'C') && i+1 < len(fields) {
-			// rename/copy: first field is the source, second the destination
+			// porcelain v1 -z rename/copy record: "XY <new>\0<old>\0" —
+			// the first field already carries the destination path (kept
+			// above); skip the source-path field that follows.
 			i++
-			path = fields[i]
 		}
 		entries = append(entries, Entry{Status: xy, Path: path})
 	}
@@ -255,16 +257,29 @@ func (r *Runner) CachedNumstat() ([]Numstat, error) {
 	return ns, nil
 }
 
-// CachedDiff returns `git diff --cached`, truncated to maxBytes.
+// CachedDiff returns `git diff --cached`, truncated to maxBytes on a UTF-8
+// rune boundary (a byte cut could split a multi-byte character mid-sequence).
 func (r *Runner) CachedDiff(maxBytes int) (string, error) {
 	out, _, err := r.run("diff", "--cached")
 	if err != nil {
 		return "", err
 	}
 	if maxBytes > 0 && len(out) > maxBytes {
-		out = out[:maxBytes] + "\n...[truncated]"
+		out = truncateUTF8(out, maxBytes) + "\n...[truncated]"
 	}
 	return out, nil
+}
+
+// truncateUTF8 cuts s to at most max bytes without splitting a UTF-8 rune.
+func truncateUTF8(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := s[:max]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut
 }
 
 func (r *Runner) AddAll() error { _, err := r.Out("add", "-A"); return err }

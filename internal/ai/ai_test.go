@@ -61,3 +61,21 @@ func TestCommitMessageIncludesAgent(t *testing.T) {
 		t.Fatal("agent instructions should be part of the system prompt")
 	}
 }
+
+func TestBuildCommandInput(t *testing.T) {
+	// empty system: input passes through unchanged
+	if got := buildCommandInput("", "diff content"); got != "diff content" {
+		t.Fatalf("empty system: got %q", got)
+	}
+	got := buildCommandInput("be concise", "diff content")
+	for _, want := range []string{"### Instructions", "be concise", "### Input", "diff content"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("input missing %q: %q", want, got)
+		}
+	}
+	// instructions must precede the actual input
+	if strings.Index(got, "### Instructions") > strings.Index(got, "### Input") ||
+		strings.Index(got, "### Input") > strings.Index(got, "diff content") {
+		t.Fatalf("section order wrong: %q", got)
+	}
+}

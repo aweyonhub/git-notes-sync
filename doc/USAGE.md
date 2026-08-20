@@ -174,8 +174,7 @@ gns sync-all            # 同步配置中所有 repos（等价 daemon 一轮）
 
 ```bash
 gns commit              # 忽略 debounce，立即提交当前所有修改
-gns commit -message "自定义信息"
-gns commit -force       # 显式强制（默认 commit 即忽略时机）
+gns commit -message "自定义信息"   # 自定义提交信息（覆盖配置的 message 模式）
 ```
 
 ### `gns commit-ai` — AI 提交
@@ -355,7 +354,7 @@ gns help                # 命令帮助
   gns repos add ~/notes -name notes     # 写入全局配置
   gns sync notes / gns sync-all / gns daemon   # 按名字同步/全量同步/定时同步
   ```
-- **仓库级 `.notes-sync.toml` 是可选的覆盖手段**：一般没必要使用；仅当某个仓库需要与全局不同的设置（如更短的 debounce、不同的提交信息模式）时，在该仓库根放一个即可，它会覆盖全局配置的对应项（配置跟随仓库走，可进 git 版本管理）。
+- **仓库级 `.notes-sync.toml` 是可选的覆盖手段**：一般没必要使用；仅当某个仓库需要与全局不同的设置（如更短的 debounce、不同的提交信息模式）时，在该仓库根放一个即可，它会覆盖全局配置的对应项（配置跟随仓库走，可进 git 版本管理）。`gns sync`、`gns sync-all` 与 daemon 逐仓库同步时都会读取仓库级覆盖；但 `sync_interval`、`[log]`、`repos` 等进程级配置只在全局配置生效，仓库级设置它们无效。
 - 单仓库用户也可以完全零配置——内置默认值（`auto_commit`、debounce 60s、max_wait 300s、timestamp 提交信息）开箱即用。
 
 ### 4.2 配置项全表

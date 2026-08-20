@@ -1,9 +1,10 @@
 // Package service registers gns as an OS service / launch agent.
 //
-// Currently macOS launchd LaunchAgent is implemented (macOS is the primary
-// desktop platform; Linux systemd user unit and Windows Task Scheduler are
-// planned — see doc/STATUS.md). The plist builder in this file is pure and
-// platform-independent so it can be unit-tested everywhere.
+// All three platforms are implemented: macOS launchd LaunchAgent, Linux
+// systemd user units (or a managed crontab block via --cron), and Windows
+// Task Scheduler (schtasks with a wscript/.vbe wrapper to avoid console
+// windows). The generators in this file are pure and platform-independent
+// so they can be unit-tested everywhere.
 package service
 
 import (
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -193,17 +195,20 @@ func Preflight(home string, repoPaths []string) []string {
 	switch {
 	case helper == "":
 		warns = append(warns, "warn: git credential.helper is not configured — background services have no terminal and HTTPS push would fail. Run: git config --global credential.helper store, then `git push` once to save credentials")
-	case strings.Contains(helper, "osxkeychain"):
+	case runtime.GOOS == "darwin" && strings.Contains(helper, "osxkeychain"):
 		warns = append(warns, "note: credential helper is osxkeychain — the first launchd run may pop a Keychain authorization dialog; click \"Always Allow\"")
 	case strings.Contains(helper, "store"):
 		// credentials are in ~/.git-credentials; nothing to do
 	}
 
-	// 2. Repos under macOS TCC-protected folders: launchd-launched processes
-	// are silently denied access to Desktop / Documents / Downloads.
-	for _, p := range repoPaths {
-		if d := tccProtectedDir(p, home); d != "" {
-			warns = append(warns, fmt.Sprintf("warn: repo %s is inside the TCC-protected ~/%s folder — launchd may silently deny access; move it to a plain path (e.g. ~/notes)", p, d))
+	// 2. macOS-only: repos under TCC-protected folders. launchd-launched
+	// processes are silently denied access to Desktop / Documents / Downloads
+	// (TCC does not exist on Linux/Windows, so skip the check elsewhere).
+	if runtime.GOOS == "darwin" {
+		for _, p := range repoPaths {
+			if d := tccProtectedDir(p, home); d != "" {
+				warns = append(warns, fmt.Sprintf("warn: repo %s is inside the TCC-protected ~/%s folder — launchd may silently deny access; move it to a plain path (e.g. ~/notes)", p, d))
+			}
 		}
 	}
 

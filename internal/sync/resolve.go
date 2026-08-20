@@ -91,7 +91,7 @@ func Resolve(repo, mode string, cfg *config.Config, gen *ai.Generator, logf func
 			logf("skipped %s: no change", f.Path)
 			continue
 		}
-		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		if err := writePreservingMode(path, out); err != nil {
 			return resolved, err
 		}
 		if err := g.Add(f.Path); err != nil {
@@ -126,4 +126,14 @@ func countMarkers(content string) int {
 		}
 	}
 	return n
+}
+
+// writePreservingMode rewrites path keeping its existing permission bits
+// (resolving an executable script must not silently drop the +x bit).
+func writePreservingMode(path, content string) error {
+	mode := os.FileMode(0o644)
+	if st, err := os.Stat(path); err == nil {
+		mode = st.Mode().Perm()
+	}
+	return os.WriteFile(path, []byte(content), mode)
 }

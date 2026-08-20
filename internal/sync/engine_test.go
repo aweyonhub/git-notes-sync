@@ -398,3 +398,28 @@ func TestNotARepository(t *testing.T) {
 		t.Fatal("expected error for non-repo")
 	}
 }
+
+func TestStatusRenameReportsNewPath(t *testing.T) {
+	_, _, b := setupRemote(t)
+	writeFile(t, b, "old.md", "hello\n")
+	gitCommitAll(t, b, "add old")
+	gitCmd(t, b, "mv", "old.md", "new.md") // stages the rename
+
+	g := newGitRunner(b)
+	entries, err := g.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Path == "old.md" {
+			t.Fatalf("Status reported the rename source instead of the destination: %+v", entries)
+		}
+		if e.Path == "new.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Status did not report the rename destination: %+v", entries)
+	}
+}

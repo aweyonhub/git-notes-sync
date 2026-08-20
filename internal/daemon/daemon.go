@@ -55,9 +55,6 @@ func Run(globalPath string, once bool) error {
 			rep := sync.Sync(repoPath, rcfg, func(f string, a ...any) {
 				logf("[%s] %s", disp, fmt.Sprintf(f, a...))
 			})
-			for _, s := range rep.Steps {
-				logf("[%s] %s", disp, s)
-			}
 			if rep.Err != nil {
 				logf("[%s] ERROR: %v", disp, rep.Err)
 			}

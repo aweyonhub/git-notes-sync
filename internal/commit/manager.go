@@ -68,12 +68,13 @@ func (m *Manager) CommitIfNeeded(automatic bool) (bool, error) {
 		}
 	}
 
-	return m.commit(g, "")
+	return m.commit(g, "", "")
 }
 
 // CommitNow explicitly commits regardless of debounce, with an optional
-// message mode override ("ai" for `gns commit-ai`).
-func (m *Manager) CommitNow(mode string) (bool, error) {
+// message mode override ("ai" for `gns commit-ai`) and an optional explicit
+// message (msg wins over mode; non-empty msg skips summary/AI generation).
+func (m *Manager) CommitNow(mode, msg string) (bool, error) {
 	g := git.NewRunner(m.Repo)
 	entries, err := g.Status()
 	if err != nil {
@@ -83,11 +84,11 @@ func (m *Manager) CommitNow(mode string) (bool, error) {
 		return false, nil
 	}
 	m.clearState(g)
-	return m.commit(g, mode)
+	return m.commit(g, mode, msg)
 }
 
 // commit stages everything, builds the message and commits.
-func (m *Manager) commit(g *git.Runner, mode string) (bool, error) {
+func (m *Manager) commit(g *git.Runner, mode, msg string) (bool, error) {
 	entries, err := g.Status()
 	if err != nil {
 		return false, err
@@ -98,13 +99,14 @@ func (m *Manager) commit(g *git.Runner, mode string) (bool, error) {
 	if err := g.AddAll(); err != nil {
 		return false, err
 	}
-	summary, err := buildSummary(g)
-	if err != nil {
-		return false, err
-	}
-	msg, err := m.message(g, mode, summary)
-	if err != nil {
-		return false, err
+	if msg == "" {
+		summary, err := buildSummary(g)
+		if err != nil {
+			return false, err
+		}
+		if msg, err = m.message(g, mode, summary); err != nil {
+			return false, err
+		}
 	}
 	m.Logf("committing %d change(s)", len(entries))
 	if err := g.Commit(msg); err != nil {

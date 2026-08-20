@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -170,8 +171,12 @@ func TestPreflightCredentialHelper(t *testing.T) {
 
 	writeGitConfig(t, "[credential]\n\thelper = osxkeychain\n")
 	warns = Preflight(home, repos)
-	if !hasWarn(warns, "osxkeychain") {
-		t.Errorf("expected osxkeychain note, got %v", warns)
+	if runtime.GOOS == "darwin" {
+		if !hasWarn(warns, "osxkeychain") {
+			t.Errorf("expected osxkeychain note, got %v", warns)
+		}
+	} else if hasWarn(warns, "osxkeychain") {
+		t.Errorf("osxkeychain note is macOS-only, got %v", warns)
 	}
 	if hasWarn(warns, "not configured") {
 		t.Errorf("osxkeychain must not trigger 'not configured', got %v", warns)
@@ -185,6 +190,9 @@ func TestPreflightCredentialHelper(t *testing.T) {
 }
 
 func TestPreflightTCCPaths(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("TCC-protected folder checks are macOS-only")
+	}
 	writeGitConfig(t, "[credential]\n\thelper = store\n") // silence credential warnings
 	home := "/Users/alice"
 

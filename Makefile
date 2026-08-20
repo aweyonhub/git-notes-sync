@@ -8,7 +8,12 @@ LDFLAGS := -s -w \
 	-X $(PKG)/internal/version.Version=$(VERSION) \
 	-X $(PKG)/internal/version.Commit=$(GIT_COMMIT)
 
-.PHONY: build test vet fmt cross clean install
+.PHONY: build test vet fmt cross clean install version
+
+# version regenerates internal/version/version.go from package.json
+# (single version source; release builds still inject via -ldflags).
+version:
+	go generate ./internal/version
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/gns
