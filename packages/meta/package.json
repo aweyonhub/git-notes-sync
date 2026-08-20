@@ -1,6 +1,6 @@
 {
   "name": "@aweyonhub/git-notes-sync",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Auto-sync for notes-style git workspaces: commit → fetch → merge → push, conflict-tolerant, AI-enhanced commit messages (gns)",
   "license": "MIT",
   "repository": {
