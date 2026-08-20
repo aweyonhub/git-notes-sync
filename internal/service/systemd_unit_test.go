@@ -23,9 +23,9 @@ func TestSystemdServiceInterval(t *testing.T) {
 		"Description=git-notes-sync sync (com.git-notes-sync)",
 		"[Service]",
 		"Type=oneshot",
-		"ExecStart=/home/alice/.local/bin/gns sync-all",
-		"Environment=PATH=/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin",
-		"Environment=HOME=/home/alice",
+		"ExecStart=\"/home/alice/.local/bin/gns\" sync-all",
+		"Environment=\"PATH=/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin\"",
+		"Environment=\"HOME=/home/alice\"",
 		"[Install]",
 		"WantedBy=default.target",
 	} {
@@ -38,6 +38,16 @@ func TestSystemdServiceInterval(t *testing.T) {
 	}
 }
 
+func TestSystemdServiceIntervalWithConfig(t *testing.T) {
+	o := linuxTestOptions()
+	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
+	got := systemdService(o)
+	want := "ExecStart=\"/home/alice/.local/bin/gns\" sync-all -c \"/home/alice/.config/git-notes-sync/config.toml\""
+	if !strings.Contains(got, want) {
+		t.Errorf("interval unit missing %q\n---\n%s", want, got)
+	}
+}
+
 func TestSystemdServiceDaemon(t *testing.T) {
 	o := linuxTestOptions()
 	o.Mode = ModeDaemon
@@ -46,7 +56,7 @@ func TestSystemdServiceDaemon(t *testing.T) {
 	for _, want := range []string{
 		"Description=git-notes-sync daemon (com.git-notes-sync)",
 		"Type=simple",
-		"ExecStart=/home/alice/.local/bin/gns daemon -c /home/alice/.config/git-notes-sync/config.toml",
+		"ExecStart=\"/home/alice/.local/bin/gns\" daemon -c \"/home/alice/.config/git-notes-sync/config.toml\"",
 		"Restart=always",
 		"RestartSec=10",
 	} {
@@ -82,9 +92,9 @@ func TestCronBlockInterval(t *testing.T) {
 	o := linuxTestOptions()
 	lines := cronBlock(o)
 	want := []string{
-		cronMarkerOpen,
-		"*/5 * * * * /home/alice/.local/bin/gns sync-all >> /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log 2>&1",
-		cronMarkerClose,
+		cronMarkerOpen(o.Label),
+		"*/5 * * * * '/home/alice/.local/bin/gns' sync-all --log '/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log'",
+		cronMarkerClose(o.Label),
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("cronBlock = %v, want %v", lines, want)
@@ -93,6 +103,73 @@ func TestCronBlockInterval(t *testing.T) {
 		if lines[i] != want[i] {
 			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
 		}
+	}
+}
+
+func TestCronBlockIntervalWithConfig(t *testing.T) {
+	o := linuxTestOptions()
+	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
+	lines := cronBlock(o)
+	want := "*/5 * * * * '/home/alice/.local/bin/gns' sync-all -c '/home/alice/.config/git-notes-sync/config.toml' --log '/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log'"
+	if lines[1] != want {
+		t.Errorf("cron line = %q, want %q", lines[1], want)
+	}
+}
+
+func TestSystemdAndCronQuotePathsWithSpaces(t *testing.T) {
+	o := LaunchOptions{
+		Label:    "com.git-notes-sync",
+		Exe:      "/home/alice/my tools/gns",
+		Mode:     ModeInterval,
+		Interval: 300,
+		Home:     "/home/alice",
+		Config:   "/home/alice/my config/config.toml",
+		LogDir:   "/home/alice/my logs",
+	}
+	svc := systemdService(o)
+	wantExec := `ExecStart="/home/alice/my tools/gns" sync-all -c "/home/alice/my config/config.toml"`
+	if !strings.Contains(svc, wantExec) {
+		t.Errorf("systemd ExecStart must quote spaced paths, got:\n%s", svc)
+	}
+	wantEnv := `Environment="PATH=/home/alice/my tools:/usr/local/bin:/usr/bin:/bin"`
+	if !strings.Contains(svc, wantEnv) {
+		t.Errorf("Environment PATH must be quoted, got:\n%s", svc)
+	}
+	cron := cronBlock(o)[1]
+	wantCron := `*/5 * * * * '/home/alice/my tools/gns' sync-all -c '/home/alice/my config/config.toml' --log '/home/alice/my logs/com.git-notes-sync.log'`
+	if cron != wantCron {
+		t.Errorf("cron line must quote spaced paths:\n got: %s\nwant: %s", cron, wantCron)
+	}
+}
+
+func TestCronAndSystemdQuoteSpecialChars(t *testing.T) {
+	in := `/home/al ice/we$ird\dir'%name`
+	cron := cronQuote(in)
+	wantCron := `'/home/al ice/we$ird\dir'\''%name'`
+	if cron != wantCron {
+		t.Errorf("cronQuote(%q) = %q, want %q", in, cron, wantCron)
+	}
+	sd := systemdQuote(in)
+	wantSD := `"/home/al ice/we$$ird\\dir'%%name"`
+	if sd != wantSD {
+		t.Errorf("systemdQuote(%q) = %q, want %q", in, sd, wantSD)
+	}
+}
+
+func TestSystemdEnvironmentKeepsSingleDollar(t *testing.T) {
+	// Environment= does not perform variable expansion: a literal $ stays
+	// single, while ExecStart= doubles it ($$).
+	o := linuxTestOptions()
+	o.Exe = "/home/al$ice/bin/gns"
+	o.Home = "/home/al$ice"
+	got := systemdService(o)
+	wantHome := `Environment="HOME=/home/al$ice"`
+	if !strings.Contains(got, wantHome) {
+		t.Errorf("Environment HOME must keep a single $, got:\n%s", got)
+	}
+	wantExec := `ExecStart="/home/al$$ice/bin/gns" sync-all`
+	if !strings.Contains(got, wantExec) {
+		t.Errorf("ExecStart must double $, got:\n%s", got)
 	}
 }
 
@@ -115,8 +192,8 @@ func TestCronScheduleRanges(t *testing.T) {
 	}{
 		{30, "*/1 * * * *"},
 		{300, "*/5 * * * *"},
-		{7200, "0 */2 * * *"},  // 2h (e.g. config sync_interval=7200)
-		{3600, "0 */1 * * *"},  // 1h
+		{7200, "0 */2 * * *"}, // 2h (e.g. config sync_interval=7200)
+		{3600, "0 */1 * * *"}, // 1h
 		{23 * 3600, "0 */23 * * *"},
 		{24 * 3600, "0 0 * * *"}, // ≥24h → daily
 	}
@@ -132,7 +209,7 @@ func TestCronBlockDaemon(t *testing.T) {
 	o.Mode = ModeDaemon
 	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
 	lines := cronBlock(o)
-	if got := lines[1]; got != "@reboot /home/alice/.local/bin/gns daemon -c /home/alice/.config/git-notes-sync/config.toml" {
+	if got := lines[1]; got != "@reboot '/home/alice/.local/bin/gns' daemon -c '/home/alice/.config/git-notes-sync/config.toml' --log '/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log'" {
 		t.Errorf("daemon cron line = %q", got)
 	}
 }
@@ -142,7 +219,7 @@ func TestMergeStripCrontab(t *testing.T) {
 	block := cronBlock(o)
 	existing := "SHELL=/bin/bash\n0 9 * * * backup-job\n"
 
-	merged := mergeCrontab(existing, block)
+	merged := mergeCrontab(existing, block, o.Label)
 	if !strings.Contains(merged, "SHELL=/bin/bash") || !strings.Contains(merged, "backup-job") {
 		t.Errorf("merge must preserve existing lines\n%s", merged)
 	}
@@ -151,18 +228,18 @@ func TestMergeStripCrontab(t *testing.T) {
 	}
 
 	// strip must restore the original content
-	if got := stripCrontab(merged); got != existing {
+	if got := stripCrontab(merged, o.Label); got != existing {
 		t.Errorf("strip = %q, want %q", got, existing)
 	}
 }
 
 func TestStripCrontabReplacesOldBlock(t *testing.T) {
 	o := linuxTestOptions()
-	old := mergeCrontab("user-line\n", cronBlock(o))
+	old := mergeCrontab("user-line\n", cronBlock(o), o.Label)
 	// re-install with a different interval → old block replaced, user line kept
 	o.Interval = 600
-	re := mergeCrontab(old, cronBlock(o))
-	if strings.Count(re, cronMarkerOpen) != 1 {
+	re := mergeCrontab(old, cronBlock(o), o.Label)
+	if strings.Count(re, cronMarkerOpen(o.Label)) != 1 {
 		t.Errorf("exactly one managed block expected\n%s", re)
 	}
 	if !strings.Contains(re, "*/10 * * * *") {
@@ -175,16 +252,63 @@ func TestStripCrontabReplacesOldBlock(t *testing.T) {
 
 func TestStripCrontabNoBlock(t *testing.T) {
 	in := "0 9 * * * job\n"
-	if got := stripCrontab(in); got != in {
+	if got := stripCrontab(in, "com.git-notes-sync"); got != in {
 		t.Errorf("strip without block must be a no-op, got %q", got)
 	}
 }
 
 func TestStripCrontabUnterminatedBlock(t *testing.T) {
 	// a block whose close marker was lost (e.g. hand-edited) is removed to EOF
-	in := "keep\n" + cronMarkerOpen + "\n*/5 * * * * x\n"
-	got := stripCrontab(in)
+	in := "keep\n" + cronMarkerOpen("com.git-notes-sync") + "\n*/5 * * * * x\n"
+	got := stripCrontab(in, "com.git-notes-sync")
 	if got != "keep\n" {
 		t.Errorf("unterminated block must be removed to EOF, got %q", got)
+	}
+}
+
+func TestCrontabMultipleLabelsCoexist(t *testing.T) {
+	o := linuxTestOptions()
+	base := "SHELL=/bin/bash\n0 9 * * * backup-job\n"
+	a := mergeCrontab(base, cronBlock(o), o.Label)
+
+	b := o
+	b.Label = "com.git-notes-sync.work"
+	b.Interval = 600
+	merged := mergeCrontab(a, cronBlock(b), b.Label)
+
+	if strings.Count(merged, cronMarkerOpen(o.Label)) != 1 {
+		t.Errorf("label A block must survive installing B\n%s", merged)
+	}
+	if strings.Count(merged, cronMarkerOpen(b.Label)) != 1 {
+		t.Errorf("label B block must be added\n%s", merged)
+	}
+	if !strings.Contains(merged, "*/5 * * * *") || !strings.Contains(merged, "*/10 * * * *") {
+		t.Errorf("both schedules must be present\n%s", merged)
+	}
+	if !strings.Contains(merged, "SHELL=/bin/bash") || !strings.Contains(merged, "backup-job") {
+		t.Errorf("user lines must survive\n%s", merged)
+	}
+
+	// uninstalling B removes only B's block
+	after := stripCrontab(merged, b.Label)
+	if strings.Contains(after, cronMarkerOpen(b.Label)) {
+		t.Errorf("B block must be removed\n%s", after)
+	}
+	if !strings.Contains(after, cronMarkerOpen(o.Label)) || !strings.Contains(after, "SHELL=/bin/bash") {
+		t.Errorf("A block and user lines must survive\n%s", after)
+	}
+	if got := stripCrontab(after, o.Label); got != base {
+		t.Errorf("removing A must restore the original content, got %q", got)
+	}
+}
+
+func TestCrontabHasManagedPerLabel(t *testing.T) {
+	o := linuxTestOptions()
+	merged := mergeCrontab("x\n", cronBlock(o), o.Label)
+	if !crontabHasManaged(merged, o.Label) {
+		t.Error("own label must be detected")
+	}
+	if crontabHasManaged(merged, "other-label") {
+		t.Error("other label must not be detected")
 	}
 }

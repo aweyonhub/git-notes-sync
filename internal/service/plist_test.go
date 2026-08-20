@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -33,8 +34,8 @@ func TestBuildPlistInterval(t *testing.T) {
 		"<string>/Users/alice/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
 		"<key>HOME</key>",
 		"<string>/Users/alice</string>",
+		"<string>--log</string>",
 		"<string>/Users/alice/Library/Logs/com.git-notes-sync.log</string>",
-		"<string>/Users/alice/Library/Logs/com.git-notes-sync.err.log</string>",
 		"<key>ProcessType</key>",
 		"<string>Background</string>",
 	} {
@@ -47,6 +48,21 @@ func TestBuildPlistInterval(t *testing.T) {
 	}
 	if strings.Contains(got, "KeepAlive") {
 		t.Errorf("interval mode must not set KeepAlive\n%s", got)
+	}
+}
+
+func TestBuildPlistIntervalWithConfig(t *testing.T) {
+	o := testOptions()
+	o.Config = "/Users/alice/.config/git-notes-sync/config.toml"
+	got := buildPlist(o)
+	for _, want := range []string{
+		"<string>sync-all</string>",
+		"<string>-c</string>",
+		"<string>/Users/alice/.config/git-notes-sync/config.toml</string>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plist missing %q\n--- plist ---\n%s", want, got)
+		}
 	}
 }
 
@@ -170,8 +186,12 @@ func TestPreflightCredentialHelper(t *testing.T) {
 
 	writeGitConfig(t, "[credential]\n\thelper = osxkeychain\n")
 	warns = Preflight(home, repos)
-	if !hasWarn(warns, "osxkeychain") {
-		t.Errorf("expected osxkeychain note, got %v", warns)
+	if runtime.GOOS == "darwin" {
+		if !hasWarn(warns, "osxkeychain") {
+			t.Errorf("expected osxkeychain note, got %v", warns)
+		}
+	} else if hasWarn(warns, "osxkeychain") {
+		t.Errorf("osxkeychain note is macOS-only, got %v", warns)
 	}
 	if hasWarn(warns, "not configured") {
 		t.Errorf("osxkeychain must not trigger 'not configured', got %v", warns)
@@ -185,6 +205,9 @@ func TestPreflightCredentialHelper(t *testing.T) {
 }
 
 func TestPreflightTCCPaths(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("TCC-protected folder checks are macOS-only")
+	}
 	writeGitConfig(t, "[credential]\n\thelper = store\n") // silence credential warnings
 	home := "/Users/alice"
 

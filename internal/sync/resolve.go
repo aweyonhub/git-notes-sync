@@ -11,6 +11,7 @@ import (
 	"github.com/aweyonhub/git-notes-sync/internal/ai"
 	"github.com/aweyonhub/git-notes-sync/internal/config"
 	"github.com/aweyonhub/git-notes-sync/internal/git"
+	"github.com/aweyonhub/git-notes-sync/internal/lock"
 	"github.com/aweyonhub/git-notes-sync/internal/retry"
 )
 
@@ -21,8 +22,8 @@ type ConflictFile struct {
 }
 
 // FindConflicts lists files with conflict markers (committed or mid-merge).
-func FindConflicts(repo string) ([]ConflictFile, error) {
-	g := git.NewRunner(repo)
+func FindConflicts(repo string, cfg *config.Config) ([]ConflictFile, error) {
+	g := newRunner(repo, cfg)
 	seen := map[string]bool{}
 	var out []ConflictFile
 	add := func(p string, blocks int) {
@@ -31,19 +32,26 @@ func FindConflicts(repo string) ([]ConflictFile, error) {
 			out = append(out, ConflictFile{Path: p, Blocks: blocks})
 		}
 	}
-	if files, err := g.MarkerFiles(); err == nil {
-		for _, f := range files {
-			if content, err := os.ReadFile(filepath.Join(repo, f)); err == nil {
-				add(f, countMarkers(string(content)))
-			} else {
-				add(f, 0)
-			}
+	// MarkerFiles already maps "no matches" (grep exit 1) to nil, nil —
+	// any other error (e.g. a git timeout) must surface instead of being
+	// misreported as "no conflicts".
+	files, err := g.MarkerFiles()
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		if content, err := os.ReadFile(filepath.Join(repo, f)); err == nil {
+			add(f, countMarkers(string(content)))
+		} else {
+			add(f, 0)
 		}
 	}
-	if unmerged, err := g.Unmerged(); err == nil {
-		for _, p := range unmerged {
-			add(p, 0)
-		}
+	unmerged, err := g.Unmerged()
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range unmerged {
+		add(p, 0)
 	}
 	return out, nil
 }
@@ -54,14 +62,26 @@ func Resolve(repo, mode string, cfg *config.Config, gen *ai.Generator, logf func
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	files, err := FindConflicts(repo)
+	g := newRunner(repo, cfg)
+	gd, err := g.GitDir()
+	if err != nil {
+		return 0, fmt.Errorf("git dir: %w", err)
+	}
+	// resolve mutates the repo (rewrite → commit → push), so it takes the
+	// same lock as the sync engine to avoid colliding with a running tick.
+	unlock, err := lock.Acquire(gd)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+
+	files, err := FindConflicts(repo, cfg)
 	if err != nil {
 		return 0, err
 	}
 	if len(files) == 0 {
 		return 0, nil
 	}
-	g := git.NewRunner(repo)
 	resolved := 0
 	for _, f := range files {
 		path := filepath.Join(repo, f.Path)
@@ -91,7 +111,7 @@ func Resolve(repo, mode string, cfg *config.Config, gen *ai.Generator, logf func
 			logf("skipped %s: no change", f.Path)
 			continue
 		}
-		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		if err := writePreservingMode(path, out); err != nil {
 			return resolved, err
 		}
 		if err := g.Add(f.Path); err != nil {
@@ -110,7 +130,7 @@ func Resolve(repo, mode string, cfg *config.Config, gen *ai.Generator, logf func
 	if remote, branch, ok := g.Upstream(); ok {
 		if err := retry.Do(cfg.RetryAttempts, func() error {
 			return g.Push(remote, branch)
-		}, 2*time.Second); err != nil {
+		}, 2*time.Second, git.IsTransient); err != nil {
 			return resolved, fmt.Errorf("push: %w", err)
 		}
 		logf("pushed %s/%s", remote, branch)
@@ -126,4 +146,14 @@ func countMarkers(content string) int {
 		}
 	}
 	return n
+}
+
+// writePreservingMode rewrites path keeping its existing permission bits
+// (resolving an executable script must not silently drop the +x bit).
+func writePreservingMode(path, content string) error {
+	mode := os.FileMode(0o644)
+	if st, err := os.Stat(path); err == nil {
+		mode = st.Mode().Perm()
+	}
+	return os.WriteFile(path, []byte(content), mode)
 }

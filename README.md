@@ -50,6 +50,7 @@ gns resolve --ours | --theirs   # 保留单侧，去 markers，提交并推送
 gns resolve --ai                # AI 语义合并（需配置 [ai]）
 gns install       # 一键注册定时任务（macOS launchd / Linux systemd·cron / Windows 任务计划）
 gns uninstall     # 卸载定时任务
+gns logs          # 查看定时任务日志（-n 行数 / -f 跟随 / --path 打印路径）
 gns daemon        # 轻量 daemon（Windows 首选，timer 轮询多仓库）
 gns version
 ```
@@ -111,7 +112,9 @@ model = "model-name"
 api_key_env = "NOTES_AI_API_KEY"
 agent_file = "AGENTS.md"      # 仓库级 agent 指令文件，随 diff 发给 AI（默认）
 # type = "command"
-# command = "codex exec ..."  # stdin = diff，stdout = commit message
+# command = "codex exec ..."  # stdin = diff（存在 system 指令/AGENTS.md 时
+#                             以 "### Instructions" + "### Input" 两段包裹），
+#                             stdout = commit message
 ```
 
 ## 行为要点
@@ -119,7 +122,7 @@ agent_file = "AGENTS.md"      # 仓库级 agent 指令文件，随 diff 发给 A
 - **提交时机**：debounce 防打断编辑；`max_wait` 基于 `.git/git-notes-sync.state` 记录"首次发现修改"时间，跨 cron 无状态运行仍可兜底强制提交。
 - **提交信息**：`timestamp`/`static` 模式附带 diff 摘要（文件列表 + 行数增减）；`ai` 模式由 AI 生成（`git diff --cached` 截断到 `max_diff_bytes`），失败 fallback 到 `ai_fallback`。
 - **冲突不阻塞**：文本冲突保留双方内容与 markers → `git add` → merge commit → push；冲突成为可延迟解决的持久状态，`gns resolve` 事后处理。二进制冲突按 `binary_strategy` 保留本地副本或中止。
-- **可靠性**：fetch/push 指数退避重试（`retry_attempts`）；`.git/git-notes-sync.lock` 防并发（10 分钟过期）；merge/rebase 进行中不叠加操作；push 被拒（远端移动）自动重 fetch + 重 merge，最多 3 轮。
+- **可靠性**：fetch/push 指数退避重试（`retry_attempts`），认证/权限等确定性错误立即返回不重试；`.git/git-notes-sync.lock` 防并发（10 分钟过期）；merge/rebase 进行中不叠加操作；push 被拒（远端移动）自动重 fetch + 重 merge，最多 3 轮。
 - **保护未提交内容**：merge 由 git 原生拒绝覆盖本地修改；此时跳过该仓库并提示。
 
 ## 开发

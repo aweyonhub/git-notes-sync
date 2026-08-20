@@ -5,23 +5,41 @@ package service
 
 import (
 	"strconv"
+	"strings"
 )
 
 // taskName returns the Task Scheduler task name for the label.
 func taskName(label string) string { return label }
 
 // taskCommand builds the command string stored in the task's /TR value.
-// Both modes wrap the exe in cmd /c with DOUBLE quotes: plain
-// `cmd /c "path" args` makes cmd strip the first quote → syntax error;
-// `cmd /c ""path" args >> "log""` is the correct form. Windows path
-// semantics: always backslash (filepath.Join would use / on non-Windows
-// test hosts).
+// Task Scheduler runs wscript.exe on a wrapper .vbe. wscript.exe is a GUI
+// program, so no console window flashes when the task fires; the .vbe then
+// launches gns hidden via WshShell.Run(..., 0). Windows path semantics:
+// always backslash (filepath.Join would use / on non-Windows test hosts).
 func taskCommand(o LaunchOptions) string {
-	log := o.LogDir + `\` + o.Label + ".log"
+	vbe := o.LogDir + `\` + o.Label + ".vbe"
+	return `wscript.exe "` + vbe + `"`
+}
+
+// taskVbeContent builds the wrapper .vbe that wscript.exe executes. It runs
+// `gns sync-all --log <path>` (or `gns daemon -c <config> --log <path>`) with
+// the window hidden (Run's 2nd arg 0 = SW_HIDE). gns handles log rotation
+// internally via --log.
+func taskVbeContent(o LaunchOptions) string {
+	logPath := o.LogDir + `\` + o.Label + ".log"
+	var cmd string
 	if o.Mode == ModeInterval {
-		return `cmd /c ""` + o.Exe + `" sync-all >> "` + log + `" 2>&1"`
+		cmd = `"` + o.Exe + `" sync-all`
+		if o.Config != "" {
+			cmd += ` -c "` + o.Config + `"`
+		}
+		cmd += ` --log "` + logPath + `"`
+	} else {
+		cmd = `"` + o.Exe + `" daemon -c "` + o.Config + `" --log "` + logPath + `"`
 	}
-	return `cmd /c ""` + o.Exe + `" daemon -c "` + o.Config + `" >> "` + log + `" 2>&1"`
+	// VBScript string literal: a literal double quote is written as "".
+	vbs := strings.ReplaceAll(cmd, `"`, `""`)
+	return `CreateObject("WScript.Shell").Run "` + vbs + `", 0, False` + "\r\n"
 }
 
 // taskCreateArgs returns the schtasks /Create argument list. Pure, so it can
@@ -39,4 +57,3 @@ func taskCreateArgs(o LaunchOptions) []string {
 	}
 	return args
 }
-

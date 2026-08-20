@@ -6,6 +6,26 @@ import (
 	"testing"
 )
 
+func TestResolveLogN(t *testing.T) {
+	cases := []struct {
+		n        int
+		follow   bool
+		explicit bool
+		want     int
+	}{
+		{50, false, false, 50}, // plain: default 50
+		{50, true, false, 20},  // -f without -n: 20 (tail -n 20 -f)
+		{100, true, true, 100}, // -n 100 -f: explicit wins
+		{100, false, true, 100},
+		{3, true, true, 3},
+	}
+	for _, c := range cases {
+		if got := resolveLogN(c.n, c.follow, c.explicit); got != c.want {
+			t.Errorf("resolveLogN(%d,%v,%v) = %d, want %d", c.n, c.follow, c.explicit, got, c.want)
+		}
+	}
+}
+
 func TestTailLastLines(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "test.log")

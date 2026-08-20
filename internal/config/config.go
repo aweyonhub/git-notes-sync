@@ -38,10 +38,17 @@ type Config struct {
 	BinaryStrategy  string `toml:"binary_strategy"` // ours | abort
 	SyncInterval    int    `toml:"sync_interval"`   // daemon tick, seconds
 	RetryAttempts   int    `toml:"retry_attempts"`
-	Repos           Repos  `toml:"repos"` // daemon/sync-all multi-repo list
+	GitTimeoutSec   int    `toml:"git_timeout"` // per git command deadline; 0 = no timeout
+	Repos           Repos  `toml:"repos"`       // daemon/sync-all multi-repo list
 
 	Conflict Conflict `toml:"conflict"`
 	AI       AI       `toml:"ai"`
+	Log      Log      `toml:"log"`
+}
+
+type Log struct {
+	MaxSizeKB  int `toml:"max_size_kb"` // 日志文件最大大小（KB），超阈值轮转
+	MaxBackups int `toml:"max_backups"` // 保留的历史日志副本数（.log.1, .log.2, ...）
 }
 
 type Conflict struct {
@@ -72,6 +79,7 @@ func Defaults() *Config {
 		BinaryStrategy:  BinaryOurs,
 		SyncInterval:    600,
 		RetryAttempts:   3,
+		GitTimeoutSec:   120,
 		Conflict: Conflict{
 			Strategy: StrategyPreserve,
 			TextExtensions: []string{
@@ -83,6 +91,10 @@ func Defaults() *Config {
 			TimeoutSec:   60,
 			MaxDiffBytes: 50 * 1024,
 			AgentFile:    "AGENTS.md",
+		},
+		Log: Log{
+			MaxSizeKB:  500,
+			MaxBackups: 1,
 		},
 	}
 }
@@ -218,6 +230,12 @@ func Load(explicit string, repoDir string) (*Config, error) {
 	if err := MergeRepo(cfg, repoDir); err != nil {
 		return nil, err
 	}
+	// validate runs on every load (not just when a repo-level config exists),
+	// so a typo like commit_message="timesamp" surfaces immediately instead
+	// of silently falling through to a default branch.
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 
@@ -233,7 +251,7 @@ func MergeRepo(cfg *Config, repoDir string) error {
 	if _, err := toml.DecodeFile(p, cfg); err != nil {
 		return fmt.Errorf("config %s: %w", p, err)
 	}
-	return cfg.validate()
+	return nil
 }
 
 func (c *Config) validate() error {
@@ -268,6 +286,14 @@ func (c *Config) validate() error {
 	}
 	if c.RetryAttempts < 1 {
 		c.RetryAttempts = 1
+	}
+	// git_timeout: 0 = no timeout (documented escape hatch); 1-4 clamp to 5
+	// so the timeout never fires mid-invocation on healthy setups.
+	if c.GitTimeoutSec < 0 {
+		c.GitTimeoutSec = 0
+	}
+	if c.GitTimeoutSec > 0 && c.GitTimeoutSec < 5 {
+		c.GitTimeoutSec = 5
 	}
 	return nil
 }

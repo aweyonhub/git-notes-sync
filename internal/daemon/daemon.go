@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aweyonhub/git-notes-sync/internal/config"
+	logPkg "github.com/aweyonhub/git-notes-sync/internal/log"
 	"github.com/aweyonhub/git-notes-sync/internal/sync"
 )
 
@@ -28,11 +29,13 @@ func Run(globalPath string, once bool) error {
 		if globalPath != "" {
 			if st, err := os.Stat(globalPath); err == nil && !st.ModTime().Equal(lastMtime) {
 				loaded, lerr := config.Load(globalPath, "")
+				// Record the mtime on failure too: a config typo would
+				// otherwise be re-logged (and re-attempted) every tick.
+				lastMtime = st.ModTime()
 				if lerr != nil {
 					logf("config error (keeping previous): %v", lerr)
 				} else {
 					cfg = loaded
-					lastMtime = st.ModTime()
 					logf("config loaded: %s", globalPath)
 				}
 			}
@@ -54,13 +57,32 @@ func Run(globalPath string, once bool) error {
 			rep := sync.Sync(repoPath, rcfg, func(f string, a ...any) {
 				logf("[%s] %s", disp, fmt.Sprintf(f, a...))
 			})
-			for _, s := range rep.Steps {
-				logf("[%s] %s", disp, s)
-			}
 			if rep.Err != nil {
 				logf("[%s] ERROR: %v", disp, rep.Err)
 			}
 		}
+		// Rotate the log every tick when running with --log redirection
+		// (GNS_LOG_FILE is set by the launcher). RotateAndReopen closes the
+		// current stdout/stderr handles first — Windows cannot rename an open
+		// file (Go opens without FILE_SHARE_DELETE), and on POSIX the open
+		// handle would keep writing into the renamed backup — then reopens
+		// and re-points the process output at the fresh file.
+		if lp := os.Getenv("GNS_LOG_FILE"); lp != "" {
+			f, err := logPkg.RotateAndReopen(lp, cfg.Log.MaxSizeKB, cfg.Log.MaxBackups, os.Stdout, os.Stderr)
+			// Adopt the new handle whenever it opened: RotateAndReopen may
+			// return a valid file together with rotate/cleanup warnings, and
+			// the old handles are already closed by then. Failing to adopt
+			// would leak the handle and leave the daemon writing to closed
+			// files — permanently silent.
+			if f != nil {
+				os.Stdout = f
+				os.Stderr = f
+			}
+			if err != nil {
+				logf("log rotate: %v", err)
+			}
+		}
+
 		if once {
 			return nil
 		}

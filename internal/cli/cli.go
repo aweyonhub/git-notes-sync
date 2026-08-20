@@ -44,6 +44,10 @@ flags (per command):
   -c path      config file (default: global config + ./.notes-sync.toml)
   -p path      target repository (default: current directory)
 
+launcher flag (any command):
+  --log path   redirect output to a log file with rotation ([log] max_size_kb / max_backups);
+               gns install injects it into scheduler registrations automatically
+
 sync flags:
   -p path      sync one repo (default: current directory)
 
@@ -67,7 +71,6 @@ config subcommands:
   note: repos use 'gns repos'; arrays (text_extensions) edit by hand
 
 commit flags:
-  -force       ignore debounce / max_wait timing
   -message s   custom commit message (overrides configured mode)
 
 daemon flags:
@@ -209,9 +212,6 @@ func cmdSync(args []string) error {
 	rep := sync.Sync(dir, cfg, func(f string, a ...any) {
 		fmt.Printf("%s  %s\n", logStamp(), fmt.Sprintf(f, a...))
 	})
-	for _, s := range rep.Steps {
-		fmt.Println(logStamp() + " " + s)
-	}
 	return rep.Err
 }
 
@@ -238,13 +238,19 @@ func cmdSyncAll(args []string) error {
 	for _, r := range repos {
 		path := r.ExpandedPath()
 		disp := r.DisplayName()
+		// Merge the repo-level .notes-sync.toml on top of the global config
+		// (same semantics as `gns sync <repo>` and the daemon). A broken
+		// repo config falls back to the global values with a warning.
+		rcfg := cfg
+		if merged, err := config.Load(cfgPath, path); err == nil {
+			rcfg = merged
+		} else {
+			fmt.Printf("%swarn: %s repo config skipped: %v\n", logStamp(), disp, err)
+		}
 		fmt.Printf("%s[%s] %s\n", logStamp(), disp, path)
-		rep := sync.Sync(path, cfg, func(f string, a ...any) {
+		rep := sync.Sync(path, rcfg, func(f string, a ...any) {
 			fmt.Printf("%s  %s\n", logStamp(), fmt.Sprintf(f, a...))
 		})
-		for _, s := range rep.Steps {
-			fmt.Println(logStamp() + " " + s)
-		}
 		if rep.Err != nil {
 			fmt.Printf("%s[%s] ERROR: %v\n", logStamp(), disp, rep.Err)
 			failed = true
@@ -259,9 +265,7 @@ func cmdSyncAll(args []string) error {
 func cmdCommit(args []string, forcedMode string) error {
 	fs := flag.NewFlagSet("commit", flag.ContinueOnError)
 	var cfgPath, repo, message string
-	var force bool
 	commonFlags(fs, &cfgPath, &repo)
-	fs.BoolVar(&force, "force", false, "ignore debounce / max_wait timing")
 	fs.StringVar(&message, "message", "", "custom commit message")
 	if err := fs.Parse(normalizeArgs(args, commonValueFlags)); err != nil {
 		return err
@@ -280,7 +284,7 @@ func cmdCommit(args []string, forcedMode string) error {
 	cm := commit.New(dir, cfg, func(f string, a ...any) {
 		fmt.Printf("  %s\n", fmt.Sprintf(f, a...))
 	})
-	made, err := cm.CommitNow(forcedMode)
+	made, err := cm.CommitNow(forcedMode, message)
 	if err != nil {
 		return err
 	}
@@ -304,10 +308,11 @@ func cmdStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := config.Load(cfgPath, dir); err != nil {
+	cfg, err := config.Load(cfgPath, dir)
+	if err != nil {
 		return err
 	}
-	out, err := sync.Status(dir)
+	out, err := sync.Status(dir, cfg)
 	if err != nil {
 		return err
 	}
@@ -329,6 +334,9 @@ func cmdResolve(args []string) error {
 	if fs.NArg() > 1 {
 		return errors.New("usage: gns resolve [repo-name | path] [--ours|--theirs|--ai]")
 	}
+	if n := b2i(ours) + b2i(theirs) + b2i(aiMode); n > 1 {
+		return errors.New("--ours / --theirs / --ai are mutually exclusive")
+	}
 	dir, err := resolveTarget(cfgPath, repo, fs.Arg(0))
 	if err != nil {
 		return err
@@ -337,7 +345,7 @@ func cmdResolve(args []string) error {
 	if err != nil {
 		return err
 	}
-	files, err := sync.FindConflicts(dir)
+	files, err := sync.FindConflicts(dir, cfg)
 	if err != nil {
 		return err
 	}
@@ -453,6 +461,13 @@ func nameOrDefault(name, path string) string {
 		return name
 	}
 	return filepath.Base(strings.TrimRight(path, `/\`))
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // cmdConfig inspects / edits scalar config keys (list | get | set | unset).
@@ -621,6 +636,11 @@ func configKeyError(dotted string) error {
 //	gns sync notes -c file   →   gns sync -c file notes
 //
 // valueFlags lists flags that consume the next argument.
+//
+// Known edge: `--` (end-of-flags terminator) is not supported — every
+// argument starting with "-" is treated as a flag, so a repository path
+// beginning with "-" cannot be expressed positionally. Accepted trade-off
+// for a small CLI; such paths can still be passed via -p/-repo.
 func normalizeArgs(args []string, valueFlags map[string]bool) []string {
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
@@ -715,10 +735,9 @@ func cmdInstall(args []string) error {
 	}
 
 	mode := service.ModeInterval
-	cfgPath := ""
+	cfgPath := config.GlobalPath() // resolved at install time (honors GNS_CONFIG)
 	if daemonMode {
 		mode = service.ModeDaemon
-		cfgPath = config.GlobalPath()
 	}
 	// interval resolution: explicit -interval > global config sync_interval > 600s
 	interval = resolveInterval(interval, cfgPath)
@@ -747,7 +766,7 @@ func cmdInstall(args []string) error {
 		return err
 	}
 
-	modeDesc := fmt.Sprintf("interval: every %ds, runs `gns sync-all` (stateless)", interval)
+	modeDesc := fmt.Sprintf("interval: every %ds, runs `gns sync-all -c %s` (stateless)", interval, cfgPath)
 	if daemonMode {
 		modeDesc = fmt.Sprintf("daemon: resident `gns daemon -c %s` (cadence = sync_interval config)", cfgPath)
 	}

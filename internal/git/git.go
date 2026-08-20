@@ -4,18 +4,23 @@ package git
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 )
 
 // Runner executes git commands inside a working directory.
 type Runner struct {
-	Dir string
-	Env []string
+	Dir     string
+	Env     []string
+	Timeout time.Duration // per-command deadline; 0 = no timeout
 }
 
 func NewRunner(dir string) *Runner { return &Runner{Dir: dir} }
@@ -38,16 +43,67 @@ func (e *CmdError) Error() string {
 
 func (e *CmdError) Unwrap() error { return e.Err }
 
+// IsTransient reports whether a git error is likely transient and worth
+// retrying. Permanent failures (auth, permissions, missing repo) are
+// reported as non-transient so callers can fail fast instead of sleeping
+// through pointless retries. Unknown error kinds default to transient —
+// the safe direction. Used by retry.Do's classifier.
+func IsTransient(err error) bool {
+	var ce *CmdError
+	if !errors.As(err, &ce) {
+		return true
+	}
+	s := strings.ToLower(ce.Stderr)
+	for _, p := range []string{
+		"authentication failed",
+		"permission denied",
+		"not a git repository",
+		"does not appear to be a git repository",
+		"repository not found",
+		"invalid username or password",
+		"returned error: 403",
+		"could not read username",
+	} {
+		if strings.Contains(s, p) {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *Runner) run(args ...string) (string, string, error) {
-	cmd := exec.Command("git", args...)
+	ctx := context.Background()
+	if r.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.Timeout)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = r.Dir
 	if len(r.Env) > 0 {
 		cmd.Env = append(os.Environ(), r.Env...)
 	}
+	// After the process is killed (timeout) or exits, an orphaned
+	// grandchild (ssh, credential helper) may still hold the output pipes —
+	// without WaitDelay, Wait blocks until it exits, re-hanging the caller.
+	// WaitDelay closes the pipes and returns ErrWaitDelay after the bound.
+	// (Modern git redirects its background gc output to gc.log, so lingering
+	// pipes on successful commands are not expected.)
+	cmd.WaitDelay = 5 * time.Second
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	err := cmd.Run()
+	if err != nil && ctx.Err() == context.DeadlineExceeded {
+		// The deadline killed git (network hang, credential prompt, etc.):
+		// surface a clear timeout error instead of the opaque kill status.
+		stderr := strings.TrimSpace(errb.String())
+		if stderr != "" {
+			stderr += "; "
+		}
+		stderr += fmt.Sprintf("timed out after %ds", int(r.Timeout/time.Second))
+		return out.String(), errb.String(), cmdErr(args, stderr, err)
+	}
 	return out.String(), errb.String(), err
 }
 
@@ -193,9 +249,10 @@ func (r *Runner) Status() ([]Entry, error) {
 		xy := f[:2]
 		path := f[3:]
 		if (xy[0] == 'R' || xy[0] == 'C' || xy[1] == 'R' || xy[1] == 'C') && i+1 < len(fields) {
-			// rename/copy: first field is the source, second the destination
+			// porcelain v1 -z rename/copy record: "XY <new>\0<old>\0" —
+			// the first field already carries the destination path (kept
+			// above); skip the source-path field that follows.
 			i++
-			path = fields[i]
 		}
 		entries = append(entries, Entry{Status: xy, Path: path})
 	}
@@ -255,16 +312,29 @@ func (r *Runner) CachedNumstat() ([]Numstat, error) {
 	return ns, nil
 }
 
-// CachedDiff returns `git diff --cached`, truncated to maxBytes.
+// CachedDiff returns `git diff --cached`, truncated to maxBytes on a UTF-8
+// rune boundary (a byte cut could split a multi-byte character mid-sequence).
 func (r *Runner) CachedDiff(maxBytes int) (string, error) {
 	out, _, err := r.run("diff", "--cached")
 	if err != nil {
 		return "", err
 	}
 	if maxBytes > 0 && len(out) > maxBytes {
-		out = out[:maxBytes] + "\n...[truncated]"
+		out = truncateUTF8(out, maxBytes) + "\n...[truncated]"
 	}
 	return out, nil
+}
+
+// truncateUTF8 cuts s to at most max bytes without splitting a UTF-8 rune.
+func truncateUTF8(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := s[:max]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut
 }
 
 func (r *Runner) AddAll() error { _, err := r.Out("add", "-A"); return err }

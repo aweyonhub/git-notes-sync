@@ -24,16 +24,20 @@ func systemdService(o LaunchOptions) string {
 	if o.Mode == ModeDaemon {
 		b.WriteString("[Service]\n")
 		b.WriteString("Type=simple\n")
-		b.WriteString("ExecStart=" + o.Exe + " daemon -c " + o.Config + "\n")
+		b.WriteString("ExecStart=" + systemdQuote(o.Exe) + " daemon -c " + systemdQuote(o.Config) + "\n")
 		b.WriteString("Restart=always\n")
 		b.WriteString("RestartSec=10\n")
 	} else {
+		exec := systemdQuote(o.Exe) + " sync-all"
+		if o.Config != "" {
+			exec += " -c " + systemdQuote(o.Config)
+		}
 		b.WriteString("[Service]\n")
 		b.WriteString("Type=oneshot\n")
-		b.WriteString("ExecStart=" + o.Exe + " sync-all\n")
+		b.WriteString("ExecStart=" + exec + "\n")
 	}
-	b.WriteString("Environment=PATH=" + o.ExeDir() + ":/usr/local/bin:/usr/bin:/bin\n")
-	b.WriteString("Environment=HOME=" + homeDir(o.Home) + "\n\n")
+	b.WriteString("Environment=\"PATH=" + systemdValueEscape(o.ExeDir()+":/usr/local/bin:/usr/bin:/bin") + "\"\n")
+	b.WriteString("Environment=\"HOME=" + systemdValueEscape(homeDir(o.Home)) + "\"\n\n")
 
 	b.WriteString("[Install]\n")
 	b.WriteString("WantedBy=default.target\n")
@@ -63,17 +67,52 @@ func modeWord(o LaunchOptions) string {
 	return "sync"
 }
 
+// cronQuote wraps a path for a crontab line, which cron runs via POSIX sh.
+// Single quotes disable every shell metacharacter ($, backtick, $(...),
+// quotes, backslash); an embedded single quote is re-escaped as '\”.
+func cronQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// systemdValueEscape escapes a value for systemd unit directives that do
+// NOT perform variable expansion (Environment=): backslash and double quote
+// are special inside quotes, and % (unit specifiers) must be doubled. A
+// literal $ stays as-is — Environment= does not expand variables.
+func systemdValueEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `%`, `%%`)
+	return s
+}
+
+// systemdExecEscape additionally doubles $, which ExecStart= interprets as
+// variable expansion ($$ passes a literal dollar sign).
+func systemdExecEscape(s string) string {
+	return strings.ReplaceAll(systemdValueEscape(s), `$`, `$$`)
+}
+
+// systemdQuote wraps a path for systemd ExecStart= in double quotes so
+// whitespace groups into one argument, with full exec escaping inside.
+func systemdQuote(s string) string {
+	return `"` + systemdExecEscape(s) + `"`
+}
+
 // cronLogPath is where crontab entries redirect output (systemd units use the
 // journal instead).
 func cronLogPath(o LaunchOptions) string {
 	return strings.TrimRight(o.LogDir, "/") + "/" + o.Label + ".log"
 }
 
-// cronMarkerOpen / cronMarkerClose delimit the managed block inside crontab.
-const (
-	cronMarkerOpen  = "# >>> gns-sync managed by gns install (do not edit) >>>"
-	cronMarkerClose = "# <<< gns-sync <<<"
-)
+// cronMarkerOpen / cronMarkerClose delimit a managed block inside crontab.
+// The label is embedded in the markers so multiple registrations (different
+// labels) can coexist in one crontab and be managed independently.
+func cronMarkerOpen(label string) string {
+	return "# >>> gns-sync " + label + " (do not edit) >>>"
+}
+
+func cronMarkerClose(label string) string {
+	return "# <<< gns-sync " + label + " <<<"
+}
 
 // cronBlock renders the crontab lines for the given options:
 //   - ModeInterval: `*/N * * * * <exe> sync-all >> <log> 2>&1`
@@ -81,13 +120,17 @@ const (
 //     keep-alive; @reboot approximates "start at boot")
 func cronBlock(o LaunchOptions) []string {
 	var lines []string
-	lines = append(lines, cronMarkerOpen)
+	lines = append(lines, cronMarkerOpen(o.Label))
 	if o.Mode == ModeDaemon {
-		lines = append(lines, "@reboot "+o.Exe+" daemon -c "+o.Config)
+		lines = append(lines, "@reboot "+cronQuote(o.Exe)+" daemon -c "+cronQuote(o.Config)+" --log "+cronQuote(cronLogPath(o)))
 	} else {
-		lines = append(lines, cronSchedule(o.Interval)+" "+o.Exe+" sync-all >> "+cronLogPath(o)+" 2>&1")
+		cmd := cronQuote(o.Exe) + " sync-all"
+		if o.Config != "" {
+			cmd += " -c " + cronQuote(o.Config)
+		}
+		lines = append(lines, cronSchedule(o.Interval)+" "+cmd+" --log "+cronQuote(cronLogPath(o)))
 	}
-	lines = append(lines, cronMarkerClose)
+	lines = append(lines, cronMarkerClose(o.Label))
 	return lines
 }
 
@@ -107,36 +150,41 @@ func cronSchedule(interval int) string {
 	}
 }
 
-// mergeCrontab inserts the managed block, replacing any previous managed
-// block (detected by the open marker). Non-managed lines are preserved.
-func mergeCrontab(existing string, block []string) string {
-	return stripCrontab(existing) + strings.Join(block, "\n") + "\n"
+// mergeCrontab inserts the managed block for the given label, replacing any
+// previous block carrying the same label. Blocks of other labels and
+// non-managed lines are preserved.
+func mergeCrontab(existing string, block []string, label string) string {
+	return stripCrontab(existing, label) + strings.Join(block, "\n") + "\n"
 }
 
-// stripCrontab removes a previously managed block (from the open marker to
-// the close marker inclusive); a block missing its close marker is removed
-// up to the end of the file. The newline right after the close marker is
-// dropped too, so stripping restores the exact pre-merge content.
-func stripCrontab(existing string) string {
-	idx := strings.Index(existing, cronMarkerOpen)
-	if idx < 0 {
-		return existing
+// stripCrontab removes every managed block whose markers carry the given
+// label; other labels' blocks and non-managed lines are preserved. A block
+// missing its close marker is removed up to the end of the file.
+func stripCrontab(existing string, label string) string {
+	open := cronMarkerOpen(label)
+	close := cronMarkerClose(label)
+	var out strings.Builder
+	rest := existing
+	for {
+		idx := strings.Index(rest, open)
+		if idx < 0 {
+			out.WriteString(rest)
+			return out.String()
+		}
+		out.WriteString(rest[:idx])
+		after := rest[idx+len(open):]
+		end := strings.Index(after, close)
+		if end < 0 {
+			return out.String() // unterminated: drop everything to EOF
+		}
+		rest = after[end+len(close):]
+		if strings.HasPrefix(rest, "\n") {
+			rest = rest[1:]
+		}
 	}
-	rest := existing[idx+len(cronMarkerOpen):]
-	end := strings.Index(rest, cronMarkerClose)
-	if end >= 0 {
-		end += len(cronMarkerClose)
-	} else {
-		end = len(rest)
-	}
-	tail := rest[end:]
-	if strings.HasPrefix(tail, "\n") {
-		tail = tail[1:]
-	}
-	return existing[:idx] + tail
 }
 
-// crontabHasManaged reports whether a managed block exists.
-func crontabHasManaged(existing string) bool {
-	return strings.Contains(existing, cronMarkerOpen)
+// crontabHasManaged reports whether a managed block for the given label exists.
+func crontabHasManaged(existing string, label string) bool {
+	return strings.Contains(existing, cronMarkerOpen(label))
 }

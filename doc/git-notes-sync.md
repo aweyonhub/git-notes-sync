@@ -183,7 +183,7 @@ type = "command"
 command = "codex exec ..."
 ```
 
-统一约定：`stdin = git diff --cached`，`stdout = commit message`。
+统一约定：`stdin = git diff --cached`，`stdout = commit message`。当存在 system 指令 / 仓库级 `AGENTS.md` 时，stdin 实际为 `### Instructions`（指令）+ `### Input`（diff）两段拼接——自定义脚本若严格按原始 diff 解析需注意。
 
 **不阻塞同步**：API 不可用、网络错误、quota 用尽、CLI 未安装、返回格式异常等情况，自动 fallback：
 

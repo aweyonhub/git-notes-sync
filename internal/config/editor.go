@@ -35,6 +35,7 @@ var configFields = []FieldSpec{
 	{"", "binary_strategy", "string", "ours | abort (binary conflict)"},
 	{"", "sync_interval", "int", "daemon tick, seconds (min 5)"},
 	{"", "retry_attempts", "int", "fetch/push retries"},
+	{"", "git_timeout", "int", "git command timeout, seconds (0 = no timeout)"},
 	{"conflict", "strategy", "string", "preserve | abort (text conflict)"},
 	{"ai", "type", "string", "api | command"},
 	{"ai", "base_url", "string", "OpenAI-compatible endpoint"},
@@ -44,6 +45,8 @@ var configFields = []FieldSpec{
 	{"ai", "timeout", "int", "AI call timeout, seconds"},
 	{"ai", "max_diff_bytes", "int", "cap diff bytes sent to AI"},
 	{"ai", "agent_file", "string", "repo-relative agent instructions file"},
+	{"log", "max_size_kb", "int", "rotate log when exceeds this size (KB)"},
+	{"log", "max_backups", "int", "number of historical log copies to keep"},
 }
 
 // AllFields returns the list of settable scalar fields.

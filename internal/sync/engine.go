@@ -19,12 +19,16 @@ import (
 
 // Report describes what a sync run did; Err is non-nil when the repo failed.
 type Report struct {
-	Steps []string
-	Err   error
+	Err error
+	out func(string, ...any) // optional live sink; nil-safe
 }
 
+// logf forwards a step to the live sink when one is set (nil is fine).
+// Callers print live via the sink; there is no buffered step list.
 func (r *Report) logf(format string, args ...any) {
-	r.Steps = append(r.Steps, fmt.Sprintf(format, args...))
+	if r.out != nil {
+		r.out(format, args...)
+	}
 }
 
 // Sync runs the full sync flow for one repository.
@@ -33,8 +37,9 @@ func Sync(repo string, cfg *config.Config, logf func(string, ...any)) *Report {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	rep.out = logf
 
-	g := git.NewRunner(repo)
+	g := newRunner(repo, cfg)
 	if !g.IsRepo() {
 		rep.Err = errors.New("not a git repository")
 		return rep
@@ -79,10 +84,10 @@ func Sync(repo string, cfg *config.Config, logf func(string, ...any)) *Report {
 		return rep
 	}
 
-	// 3. fetch (network retry)
+	// 3. fetch (network retry; auth/permission errors fail fast)
 	if err := retry.Do(cfg.RetryAttempts, func() error {
 		return g.Fetch(remote)
-	}, 2*time.Second); err != nil {
+	}, 2*time.Second, git.IsTransient); err != nil {
 		rep.Err = fmt.Errorf("fetch %s: %w", remote, err)
 		return rep
 	}
@@ -131,7 +136,7 @@ func pushWithFollowup(g *git.Runner, remote, branch string, cfg *config.Config, 
 	for attempt := 0; attempt < 3; attempt++ {
 		err := retry.Do(cfg.RetryAttempts, func() error {
 			return g.Push(remote, branch)
-		}, 2*time.Second)
+		}, 2*time.Second, git.IsTransient)
 		if err == nil {
 			rep.logf("pushed to %s/%s", remote, branch)
 			return nil
@@ -142,7 +147,7 @@ func pushWithFollowup(g *git.Runner, remote, branch string, cfg *config.Config, 
 		rep.logf("push rejected (remote moved); re-syncing")
 		if err := retry.Do(cfg.RetryAttempts, func() error {
 			return g.Fetch(remote)
-		}, 2*time.Second); err != nil {
+		}, 2*time.Second, git.IsTransient); err != nil {
 			return fmt.Errorf("re-fetch: %w", err)
 		}
 		if err := mergeUpstream(g, remote, branch, cfg, rep); err != nil {

@@ -174,8 +174,7 @@ gns sync-all            # 同步配置中所有 repos（等价 daemon 一轮）
 
 ```bash
 gns commit              # 忽略 debounce，立即提交当前所有修改
-gns commit -message "自定义信息"
-gns commit -force       # 显式强制（默认 commit 即忽略时机）
+gns commit -message "自定义信息"   # 自定义提交信息（覆盖配置的 message 模式）
 ```
 
 ### `gns commit-ai` — AI 提交
@@ -250,14 +249,15 @@ gns config list -c my.toml         # 指定配置文件（默认全局配置）
 
 ```bash
 gns logs                  # 最近 50 行（默认 label com.git-notes-sync）
-gns logs -n 200           # 更多行
-gns logs -f               # 跟随新输出
-gns logs -label <label>   # 其他 label
+gns logs -f               # 跟随新输出（默认先显示最后 20 行，再实时跟随）
+gns logs -n 200 -f        # 先显示最后 200 行再跟随（显式 -n 优先生效）
+gns logs --label <label>   # 其他 label
+gns logs --path              # 只打印日志文件路径
 ```
 
 日志来源：macOS `~/Library/Logs/<label>.log`；Linux cron `~/.local/state/git-notes-sync/<label>.log`（systemd 模式自动走 `journalctl --user -u <label>`）；Windows `%LOCALAPPDATA%\git-notes-sync\<label>.log`。
 
-### `gns daemon` — 轻量常驻（Windows 首选）
+### `gns daemon` — 轻量常驻
 
 ```bash
 gns daemon              # 按 sync_interval（默认 600s = 10min）定时同步所有 repos
@@ -276,11 +276,33 @@ gns install             # macOS：launchd 按配置 sync_interval 触发一次 `
 gns install --daemon    # 常驻：macOS KeepAlive / Linux systemd Restart=always / Windows ONLOGON 守护 `gns daemon`
                         #       （节奏由配置 sync_interval 控制；Linux 加 --cron 则用 @reboot）
 gns install -interval 600    # 改触发间隔（优先级：-interval > 配置 sync_interval > 默认 600s；Windows 最小 1 分钟）
-# 其他 flag：-exe path（默认本二进制）、-label s（默认 com.git-notes-sync）、-force（覆盖已有）
-gns uninstall           # 停止并删除注册（macOS：bootout + 删 plist；Linux：disable + 删 unit / crontab 块；Windows：schtasks /Delete）
+# 其他 flag：-exe path（默认本二进制）、-label s（默认 com.git-notes-sync，多套注册见下「--label」）、-force（覆盖已有）
+gns uninstall           # 停止并删除注册（macOS：bootout + 删 plist；Linux：disable + 删 unit / crontab 块；Windows：schtasks /Delete + 删 .vbe）
+                        # 各平台均保留历史日志文件（macOS ~/Library/Logs/<label>.log、Linux cron ~/.local/state/...、Windows %LOCALAPPDATA%\git-notes-sync\<label>.log；systemd 日志在 journal 由 journald 管理），需清理请手动删除
 ```
 
-**Windows（任务计划程序）**：用户级任务（`schtasks /Create`，无需管理员，登录后才运行——与 launchd Agent / systemd user unit 语义一致）。`-interval` 模式 = `/SC MINUTE`（最小 1 分钟，小于 60s 自动取 1）；`--daemon` 模式 = `/SC ONLOGON`（登录时启动常驻 daemon）。输出重定向到 `%LOCALAPPDATA%\git-notes-sync\<label>.log`。查看/管理：`schtasks /Query /TN <label>`、`taskschd.msc`（任务计划程序）。任务名 = `-label`（默认 `com.git-notes-sync`）。⚠️ 任务计划程序没有 keep-alive 机制（launchd KeepAlive / systemd Restart=always 的等价物）——daemon 崩溃后不会自动重启（ONLOGON 任务在下次登录时再跑）。
+### `--label` — 一套注册一个标识（多套注册并存）
+
+`label` 是一套定时注册的标识（默认 `com.git-notes-sync`），`install` / `uninstall` / `logs` 三个命令都用它定位同一套注册：macOS 的 plist 文件名与 launchd Label、Linux systemd 的 unit 名（`<label>.service/.timer`）与 `journalctl -u <label>` 查询、cron 的托管块标记、Windows 的任务计划任务名与日志文件，全部由 label 派生。因此**用不同 label 可以并行跑多套互不干扰的注册**（不同节奏/不同模式），卸载和看日志也各自独立：
+
+```bash
+gns install --label work -interval 300        # 一套注册：5 分钟一轮
+gns install --label personal -interval 1800   # 另一套注册：30 分钟一轮
+gns logs --label work      # 只看 work 注册的日志
+gns logs --label personal  # 只看 personal 注册的日志
+gns uninstall --label work # 只卸 work 注册，personal 不受影响
+```
+
+规则：label 不能含空格和 `/`；同一 label 重复 `gns install` 会报错（用 `-force` 覆盖）；不带 `-label` 时即默认 `com.git-notes-sync`。
+
+> ⚠️ label 隔离的是"注册"而非"配置"：interval 模式注册的命令是 `gns sync-all`（不带 -c），**所有 label 都运行同一全局配置的 `repos`**，不同 label 只能区分节奏/模式/`-exe` 二进制。要让不同 label 跑不同仓库，用 daemon 模式并在 install 时用 `GNS_CONFIG` 指向不同配置文件（`-c` 路径会在安装时固化进注册）：
+>
+> ```bash
+> GNS_CONFIG=~/.config/git-notes-sync/work.toml     gns install --daemon --label work
+> GNS_CONFIG=~/.config/git-notes-sync/personal.toml gns install --daemon --label personal
+> ```
+
+**Windows（任务计划程序）**：用户级任务（`schtasks /Create`，无需管理员，登录后才运行——与 launchd Agent / systemd user unit 语义一致）。`-interval` 模式 = `/SC MINUTE`（最小 1 分钟，小于 60s 自动取 1）；`--daemon` 模式 = `/SC ONLOGON`（登录时启动常驻 daemon）。**后台不弹黑窗**（wscript + .vbe 实现，见 STATUS §2.4）。输出到 `%LOCALAPPDATA%\git-notes-sync\<label>.log`。查看/管理：`schtasks /Query /TN <label>`、`taskschd.msc`（任务计划程序）。任务名 = label（label 说明见上「--label」）。⚠️ 任务计划程序没有 keep-alive 机制（launchd KeepAlive / systemd Restart=always 的等价物）——daemon 崩溃后不会自动重启（ONLOGON 任务在下次登录时再跑）。
 
 **macOS（launchd）**：plist 位于 `~/Library/LaunchAgents/<label>.plist`，日志在 `~/Library/Logs/<label>.log(.err.log)`。plist 自动包含：
 
@@ -332,7 +354,7 @@ gns help                # 命令帮助
   gns repos add ~/notes -name notes     # 写入全局配置
   gns sync notes / gns sync-all / gns daemon   # 按名字同步/全量同步/定时同步
   ```
-- **仓库级 `.notes-sync.toml` 是可选的覆盖手段**：一般没必要使用；仅当某个仓库需要与全局不同的设置（如更短的 debounce、不同的提交信息模式）时，在该仓库根放一个即可，它会覆盖全局配置的对应项（配置跟随仓库走，可进 git 版本管理）。
+- **仓库级 `.notes-sync.toml` 是可选的覆盖手段**：一般没必要使用；仅当某个仓库需要与全局不同的设置（如更短的 debounce、不同的提交信息模式）时，在该仓库根放一个即可，它会覆盖全局配置的对应项（配置跟随仓库走，可进 git 版本管理）。`gns sync`、`gns sync-all` 与 daemon 逐仓库同步时都会读取仓库级覆盖；但 `sync_interval`、`[log]`、`repos` 等进程级配置只在全局配置生效，仓库级设置它们无效。
 - 单仓库用户也可以完全零配置——内置默认值（`auto_commit`、debounce 60s、max_wait 300s、timestamp 提交信息）开箱即用。
 
 ### 4.2 配置项全表
@@ -347,8 +369,11 @@ gns help                # 命令帮助
 | `ai_fallback` | `"timestamp"` | AI 失败时的降级：`timestamp` \| `static` |
 | `binary_strategy` | `"ours"` | 二进制冲突：`ours`（保留本地副本）\| `abort`（中止同步） |
 | `sync_interval` | `600` | daemon 轮询间隔（秒，最小 5，默认 600 = 10 分钟） |
-| `retry_attempts` | `3` | fetch/push 网络失败重试次数（2s/4s/8s 退避） |
+| `retry_attempts` | `3` | fetch/push 网络失败重试次数（2s/4s/8s 退避）；认证/权限等确定性错误立即返回不重试 |
+| `git_timeout` | `120` | 单个 git 命令超时（秒）；网络挂起/凭据等待会按此杀掉 git 进程并报错重试；`0` = 不超时（不推荐）；1-4 钳到 5 |
 | `repos` | `[]` | daemon 遍历的仓库列表；为空则当前目录 |
+| `[log] max_size_kb` | `500` | 日志文件大小阈值（KB），超阈值自动轮转（切为 `<label>.log.1`） |
+| `[log] max_backups` | `1` | 保留的历史日志副本数（`.1` 最新）；`0` = 超阈值直接删 |
 | `[conflict] strategy` | `"preserve"` | 文本冲突：`preserve`（保留 markers 继续同步）\| `abort`（中止） |
 | `[conflict] text_extensions` | 见下 | 视为文本的扩展名列表，默认 `.md .markdown .txt`（需其他格式自行扩展） |
 | `[ai] type` | 空 | `api`（OpenAI 兼容接口）\| `command`（任意 CLI） |
@@ -375,6 +400,11 @@ ai_fallback = "timestamp"
 binary_strategy = "ours"
 sync_interval = 600
 retry_attempts = 3
+
+# 日志轮转（可选；仅对 --log 文件模式生效，systemd journal 模式由 journald 管理）
+# [log]
+# max_size_kb = 500      # 超阈值轮转（默认 500KB）
+# max_backups = 1        # 保留副本数（默认 1；0 = 超阈值直接删）
 
 # 多仓库列表（daemon / gns sync-all / gns sync <name> 使用）
 # 写法一：简单数组（显示名 = 路径）
@@ -414,7 +444,7 @@ max_diff_bytes = 51200
 gns install             # systemd timer：按配置 sync_interval 触发一次 gns sync-all（无状态）
 gns install --daemon    # systemd service 常驻（Restart=always，崩溃自动拉起；节奏 = 配置 sync_interval）
 gns install -interval 600    # 改触发间隔
-# 其他 flag：-exe path（默认本二进制）、-label s（默认 com.git-notes-sync）、-force（覆盖已有）
+# 其他 flag 同总览：-exe / -label / -force（label 用法见 §3「--label」）
 gns uninstall           # disable + 删 unit 文件（~/.config/systemd/user/<label>.{service,timer}）
 ```
 
@@ -429,10 +459,10 @@ gns uninstall           # disable + 删 unit 文件（~/.config/systemd/user/<la
 ```bash
 gns install --cron              # 按配置 sync_interval（默认 600s → */10）跑 gns sync-all
 gns install --daemon --cron     # @reboot 启动 gns daemon（cron 无常驻守护，崩溃不重启）
-gns uninstall                   # 移除 crontab 中的托管块
+gns uninstall                   # 移除 crontab 中本 label 的托管块（其他 label 的块不受影响）
 ```
 
-在 crontab 中维护一个标记块（`# >>> gns-sync managed by gns install` ... `# <<< gns-sync <<<`），只增删该块、保留其他条目；日志重定向到 `~/.local/state/git-notes-sync/<label>.log`。注意：cron 无秒级/任意周期能力，interval 换算规则为**向上取整**：≤59min → `*/N`（300s→`*/5`、90s→`*/2` 实际 120s）；≤23h → `0 */H`（7200s→每 2 小时）；≥24h → 每天 0 点。环境极简（凭据用 `credential.helper store` 或免密 SSH key）、crontab 读写存在并发竞态（与系统其他 crontab 工具同时编辑时）。
+在 crontab 中维护标记块（`# >>> gns-sync <label> (do not edit) >>>` ... `# <<< gns-sync <label> <<<`，标记内嵌 label，多个 label 可并存、各自独立安装/卸载互不影响，用法见 §3「--label」），只增删对应 label 的块、保留其他条目；日志重定向到 `~/.local/state/git-notes-sync/<label>.log`。注意：cron 无秒级/任意周期能力，interval 换算规则为**向上取整**：≤59min → `*/N`（300s→`*/5`、90s→`*/2` 实际 120s）；≤23h → `0 */H`（7200s→每 2 小时）；≥24h → 每天 0 点。环境极简（凭据用 `credential.helper store` 或免密 SSH key）、crontab 读写存在并发竞态（与系统其他 crontab 工具同时编辑时）。
 
 ### macOS — launchd（推荐 `gns install` 一键，也可手写 plist）
 
@@ -471,21 +501,19 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.git-notes-sync.plist
 launchctl bootout gui/$(id -u)/com.git-notes-sync                                   # 卸载
 ```
 
-### Windows — daemon（首选）或任务计划程序
-
-**方式一：daemon**
+### Windows — `gns install` 一键（任务计划，无需管理员）
 
 ```bash
-gns daemon
+gns install                 # **推荐方式** 任务计划每分钟触发一次 gns sync-all（schtasks MINUTE，最小 1 分钟；interval 取 -interval > 配置 sync_interval > 默认 600s → */10）
+gns install --daemon        # ONLOGON 登录时启动常驻 gns daemon（节奏 = 配置 sync_interval）
+gns install --daemon -interval 300  # 说明：daemon 模式 interval 由配置控制，flag 无效
+gns uninstall               # schtasks /Delete + 删 .vbe 包装脚本（历史日志 <label>.log 保留，需清理可手动删除）
 ```
 
-启动后每 600s（10 分钟）自动同步所有 `repos`。开机自启：将 `gns daemon` 放入「启动」文件夹或任务计划程序。异常退出后重启即恢复，无状态恢复逻辑。
+**⚙️ 隐藏窗口机制（重要）**：`gns install` 在任务计划里注册的是 `wscript.exe` 执行一个 `.vbe` 包装脚本（`%LOCALAPPDATA%\git-notes-sync\<label>.vbe`），由它隐藏窗口启动 `gns ... --log <日志>`——**必须经 wscript + vbe 方式，直接注册 `gns.exe` 到任务计划会在每次触发时弹黑色控制台窗口**。日志写入 `%LOCALAPPDATA%\git-notes-sync\<label>.log`，查看 `gns logs`。
 
-**方式二：任务计划程序**
-
-- 触发器：每 5 分钟 / 登录时
-- 操作：`gns.exe sync-all`（同步配置中所有 repos，无需设工作目录）；单仓库可用 `gns.exe sync` 并设置工作目录
-- ⚠️ 注意：任务计划程序的环境变量受限，SSH agent / credential helper 需保证可用
+- 凭证：任务计划**继承启动时登入用户的会话环境**，比 cron 的受限环境好；HTTPS 仓库仍建议 `credential.helper`（store / osxkeychain 均可）
+- ⚠️ 任务计划无 keep-alive：daemon 崩溃不会自动重启（对比 Linux systemd 的 `Restart=always`）
 
 ### daemon / cron 环境注意事项
 
@@ -540,7 +568,7 @@ type = "command"
 command = "codex exec --format openai ..."   # 或 ollama run qwen2.5 / 自定义程序
 ```
 
-约定：**stdin = git diff（或待解决冲突文件内容），stdout = 提交信息（或解决结果）**。退出码非 0 或超时视为失败。
+约定：**stdin = git diff（或待解决冲突文件内容），stdout = 提交信息（或解决结果）**。退出码非 0 或超时视为失败。存在 system 指令 / 仓库级 `AGENTS.md` 时，stdin 实际为 `### Instructions`（指令）+ `### Input`（diff/冲突内容）两段拼接——自定义脚本若严格按原始 diff 解析需注意。
 
 ### 6.4 Agent 指令文件
 
@@ -593,7 +621,8 @@ gns resolve --ai        # AI 语义合并（建议人工复核）
 | `merge origin/main failed: Your local changes ... would be overwritten` | `auto_commit=false` 且工作区有未提交修改与远端冲突。`gns commit` 或 stash 后重试 |
 | `push rejected (fetch first)` | 远端在你 fetch 后又更新。工具已自动重 fetch + 重 merge 重试（≤3 轮）；若仍失败说明远端持续移动，手动处理 |
 | `git is in MERGE_HEAD state` | 存在未完成的 merge/rebase（可能来自其他工具）。先手动完成或 `git merge --abort` |
-| `another sync is running (lock: ...)` | 上一次同步未正常结束。锁 10 分钟自动过期；也可删除 `.git/git-notes-sync.lock` |
+| `another sync is running (lock: ...)` | `gns sync` / `gns resolve` 互斥：另一实例正在操作同一仓库。锁 10 分钟自动过期；也可删除 `.git/git-notes-sync.lock` |
+| `gns resolve` 推送被拒（远端又变动） | resolve 不做自动重试；跑一次 `gns sync` 走完整引擎链路（re-fetch + re-merge + push）补齐即可 |
 | AI 未生效 | 检查 `commit_message = "ai"`、`[ai] type` 已配置、`api_key_env` 指向的环境变量已导出 |
 | `commit` 报 "Please tell me who you are" | 未配置 git 身份：`git config --global user.name/email` |
 | 与 Obsidian Git 插件冲突？ | 不冲突。本工具在系统层操作 Git，不介入编辑器进程，可共存或互补 |
