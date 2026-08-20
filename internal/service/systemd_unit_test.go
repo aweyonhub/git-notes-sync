@@ -23,7 +23,7 @@ func TestSystemdServiceInterval(t *testing.T) {
 		"Description=git-notes-sync sync (com.git-notes-sync)",
 		"[Service]",
 		"Type=oneshot",
-		"ExecStart=/home/alice/.local/bin/gns sync-all",
+		"ExecStart=\"/home/alice/.local/bin/gns\" sync-all",
 		"Environment=PATH=/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin",
 		"Environment=HOME=/home/alice",
 		"[Install]",
@@ -42,7 +42,7 @@ func TestSystemdServiceIntervalWithConfig(t *testing.T) {
 	o := linuxTestOptions()
 	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
 	got := systemdService(o)
-	want := "ExecStart=/home/alice/.local/bin/gns sync-all -c /home/alice/.config/git-notes-sync/config.toml"
+	want := "ExecStart=\"/home/alice/.local/bin/gns\" sync-all -c \"/home/alice/.config/git-notes-sync/config.toml\""
 	if !strings.Contains(got, want) {
 		t.Errorf("interval unit missing %q\n---\n%s", want, got)
 	}
@@ -56,7 +56,7 @@ func TestSystemdServiceDaemon(t *testing.T) {
 	for _, want := range []string{
 		"Description=git-notes-sync daemon (com.git-notes-sync)",
 		"Type=simple",
-		"ExecStart=/home/alice/.local/bin/gns daemon -c /home/alice/.config/git-notes-sync/config.toml",
+		"ExecStart=\"/home/alice/.local/bin/gns\" daemon -c \"/home/alice/.config/git-notes-sync/config.toml\"",
 		"Restart=always",
 		"RestartSec=10",
 	} {
@@ -93,7 +93,7 @@ func TestCronBlockInterval(t *testing.T) {
 	lines := cronBlock(o)
 	want := []string{
 		cronMarkerOpen(o.Label),
-		"*/5 * * * * /home/alice/.local/bin/gns sync-all --log /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log",
+		"*/5 * * * * \"/home/alice/.local/bin/gns\" sync-all --log \"/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log\"",
 		cronMarkerClose(o.Label),
 	}
 	if len(lines) != len(want) {
@@ -110,9 +110,31 @@ func TestCronBlockIntervalWithConfig(t *testing.T) {
 	o := linuxTestOptions()
 	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
 	lines := cronBlock(o)
-	want := "*/5 * * * * /home/alice/.local/bin/gns sync-all -c /home/alice/.config/git-notes-sync/config.toml --log /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log"
+	want := "*/5 * * * * \"/home/alice/.local/bin/gns\" sync-all -c \"/home/alice/.config/git-notes-sync/config.toml\" --log \"/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log\""
 	if lines[1] != want {
 		t.Errorf("cron line = %q, want %q", lines[1], want)
+	}
+}
+
+func TestSystemdAndCronQuotePathsWithSpaces(t *testing.T) {
+	o := LaunchOptions{
+		Label:    "com.git-notes-sync",
+		Exe:      "/home/alice/my tools/gns",
+		Mode:     ModeInterval,
+		Interval: 300,
+		Home:     "/home/alice",
+		Config:   "/home/alice/my config/config.toml",
+		LogDir:   "/home/alice/my logs",
+	}
+	svc := systemdService(o)
+	wantExec := `ExecStart="/home/alice/my tools/gns" sync-all -c "/home/alice/my config/config.toml"`
+	if !strings.Contains(svc, wantExec) {
+		t.Errorf("systemd ExecStart must quote spaced paths, got:\n%s", svc)
+	}
+	cron := cronBlock(o)[1]
+	wantCron := `*/5 * * * * "/home/alice/my tools/gns" sync-all -c "/home/alice/my config/config.toml" --log "/home/alice/my logs/com.git-notes-sync.log"`
+	if cron != wantCron {
+		t.Errorf("cron line must quote spaced paths:\n got: %s\nwant: %s", cron, wantCron)
 	}
 }
 
@@ -152,7 +174,7 @@ func TestCronBlockDaemon(t *testing.T) {
 	o.Mode = ModeDaemon
 	o.Config = "/home/alice/.config/git-notes-sync/config.toml"
 	lines := cronBlock(o)
-	if got := lines[1]; got != "@reboot /home/alice/.local/bin/gns daemon -c /home/alice/.config/git-notes-sync/config.toml --log /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log" {
+	if got := lines[1]; got != "@reboot \"/home/alice/.local/bin/gns\" daemon -c \"/home/alice/.config/git-notes-sync/config.toml\" --log \"/home/alice/.local/state/git-notes-sync/com.git-notes-sync.log\"" {
 		t.Errorf("daemon cron line = %q", got)
 	}
 }

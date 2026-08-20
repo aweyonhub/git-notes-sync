@@ -122,6 +122,30 @@ commit_max_wait = 5
 	}
 }
 
+func TestGitTimeoutDefaultAndClamp(t *testing.T) {
+	if got := Defaults().GitTimeoutSec; got != 120 {
+		t.Errorf("default git_timeout = %d, want 120", got)
+	}
+	// 1-4 clamp to 5 so the deadline never fires mid-invocation
+	p := writeTemp(t, "git_timeout = 3\n")
+	cfg, err := Load(p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitTimeoutSec != 5 {
+		t.Errorf("git_timeout 3 should clamp to 5, got %d", cfg.GitTimeoutSec)
+	}
+	// 0 = no timeout (documented escape hatch)
+	p2 := writeTemp(t, "git_timeout = 0\n")
+	cfg2, err := Load(p2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg2.GitTimeoutSec != 0 {
+		t.Errorf("git_timeout 0 should mean no timeout, got %d", cfg2.GitTimeoutSec)
+	}
+}
+
 func TestExpandPath(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	// "/abs/p" starts with "/" — expandPath preserves it as-is on all

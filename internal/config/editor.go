@@ -35,6 +35,7 @@ var configFields = []FieldSpec{
 	{"", "binary_strategy", "string", "ours | abort (binary conflict)"},
 	{"", "sync_interval", "int", "daemon tick, seconds (min 5)"},
 	{"", "retry_attempts", "int", "fetch/push retries"},
+	{"", "git_timeout", "int", "git command timeout, seconds (0 = no timeout)"},
 	{"conflict", "strategy", "string", "preserve | abort (text conflict)"},
 	{"ai", "type", "string", "api | command"},
 	{"ai", "base_url", "string", "OpenAI-compatible endpoint"},

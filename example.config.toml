@@ -63,6 +63,8 @@ sync_interval = 600           # seconds between ticks (default 600 = 10min; min 
                               # interval for `gns install` (explicit -interval wins)
 retry_attempts = 3            # fetch/push retries (exponential backoff;
                               # values < 1 are clamped to 1)
+git_timeout = 120             # per git command deadline, seconds (0 = no
+                              # timeout, not recommended; 1-4 clamp to 5)
 
 # 多仓库列表（daemon / gns sync-all 使用；两种写法等价）：
 # 写法一：简单数组（显示名 = 路径）

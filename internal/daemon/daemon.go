@@ -29,11 +29,13 @@ func Run(globalPath string, once bool) error {
 		if globalPath != "" {
 			if st, err := os.Stat(globalPath); err == nil && !st.ModTime().Equal(lastMtime) {
 				loaded, lerr := config.Load(globalPath, "")
+				// Record the mtime on failure too: a config typo would
+				// otherwise be re-logged (and re-attempted) every tick.
+				lastMtime = st.ModTime()
 				if lerr != nil {
 					logf("config error (keeping previous): %v", lerr)
 				} else {
 					cfg = loaded
-					lastMtime = st.ModTime()
 					logf("config loaded: %s", globalPath)
 				}
 			}

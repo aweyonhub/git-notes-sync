@@ -24,13 +24,13 @@ func systemdService(o LaunchOptions) string {
 	if o.Mode == ModeDaemon {
 		b.WriteString("[Service]\n")
 		b.WriteString("Type=simple\n")
-		b.WriteString("ExecStart=" + o.Exe + " daemon -c " + o.Config + "\n")
+		b.WriteString("ExecStart=" + shQuote(o.Exe) + " daemon -c " + shQuote(o.Config) + "\n")
 		b.WriteString("Restart=always\n")
 		b.WriteString("RestartSec=10\n")
 	} else {
-		exec := o.Exe + " sync-all"
+		exec := shQuote(o.Exe) + " sync-all"
 		if o.Config != "" {
-			exec += " -c " + o.Config
+			exec += " -c " + shQuote(o.Config)
 		}
 		b.WriteString("[Service]\n")
 		b.WriteString("Type=oneshot\n")
@@ -67,6 +67,10 @@ func modeWord(o LaunchOptions) string {
 	return "sync"
 }
 
+// shQuote wraps a path in double quotes so command lines survive spaces.
+// systemd's ExecStart= and cron (sh) both accept double-quoted tokens.
+func shQuote(s string) string { return `"` + s + `"` }
+
 // cronLogPath is where crontab entries redirect output (systemd units use the
 // journal instead).
 func cronLogPath(o LaunchOptions) string {
@@ -92,13 +96,13 @@ func cronBlock(o LaunchOptions) []string {
 	var lines []string
 	lines = append(lines, cronMarkerOpen(o.Label))
 	if o.Mode == ModeDaemon {
-		lines = append(lines, "@reboot "+o.Exe+" daemon -c "+o.Config+" --log "+cronLogPath(o))
+		lines = append(lines, "@reboot "+shQuote(o.Exe)+" daemon -c "+shQuote(o.Config)+" --log "+shQuote(cronLogPath(o)))
 	} else {
-		cmd := o.Exe + " sync-all"
+		cmd := shQuote(o.Exe) + " sync-all"
 		if o.Config != "" {
-			cmd += " -c " + o.Config
+			cmd += " -c " + shQuote(o.Config)
 		}
-		lines = append(lines, cronSchedule(o.Interval)+" "+cmd+" --log "+cronLogPath(o))
+		lines = append(lines, cronSchedule(o.Interval)+" "+cmd+" --log "+shQuote(cronLogPath(o)))
 	}
 	lines = append(lines, cronMarkerClose(o.Label))
 	return lines

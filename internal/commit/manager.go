@@ -34,10 +34,19 @@ func New(repo string, cfg *config.Config, logf func(string, ...any)) *Manager {
 	return &Manager{Repo: repo, Cfg: cfg, Logf: logf}
 }
 
+// runner builds a git runner with the configured per-command timeout.
+func (m *Manager) runner() *git.Runner {
+	g := git.NewRunner(m.Repo)
+	if m.Cfg.GitTimeoutSec > 0 {
+		g.Timeout = time.Duration(m.Cfg.GitTimeoutSec) * time.Second
+	}
+	return g
+}
+
 // CommitIfNeeded commits pending changes, honoring debounce / max_wait when
 // automatic is true (called from sync). Returns whether a commit was made.
 func (m *Manager) CommitIfNeeded(automatic bool) (bool, error) {
-	g := git.NewRunner(m.Repo)
+	g := m.runner()
 	entries, err := g.Status()
 	if err != nil {
 		return false, err
@@ -75,7 +84,7 @@ func (m *Manager) CommitIfNeeded(automatic bool) (bool, error) {
 // message mode override ("ai" for `gns commit-ai`) and an optional explicit
 // message (msg wins over mode; non-empty msg skips summary/AI generation).
 func (m *Manager) CommitNow(mode, msg string) (bool, error) {
-	g := git.NewRunner(m.Repo)
+	g := m.runner()
 	entries, err := g.Status()
 	if err != nil {
 		return false, err

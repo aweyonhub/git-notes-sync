@@ -369,7 +369,8 @@ gns help                # 命令帮助
 | `ai_fallback` | `"timestamp"` | AI 失败时的降级：`timestamp` \| `static` |
 | `binary_strategy` | `"ours"` | 二进制冲突：`ours`（保留本地副本）\| `abort`（中止同步） |
 | `sync_interval` | `600` | daemon 轮询间隔（秒，最小 5，默认 600 = 10 分钟） |
-| `retry_attempts` | `3` | fetch/push 网络失败重试次数（2s/4s/8s 退避） |
+| `retry_attempts` | `3` | fetch/push 网络失败重试次数（2s/4s/8s 退避）；认证/权限等确定性错误立即返回不重试 |
+| `git_timeout` | `120` | 单个 git 命令超时（秒）；网络挂起/凭据等待会按此杀掉 git 进程并报错重试；`0` = 不超时（不推荐）；1-4 钳到 5 |
 | `repos` | `[]` | daemon 遍历的仓库列表；为空则当前目录 |
 | `[log] max_size_kb` | `500` | 日志文件大小阈值（KB），超阈值自动轮转（切为 `<label>.log.1`） |
 | `[log] max_backups` | `1` | 保留的历史日志副本数（`.1` 最新）；`0` = 超阈值直接删 |

@@ -56,6 +56,9 @@ func Resolve(repo, mode string, cfg *config.Config, gen *ai.Generator, logf func
 		logf = func(string, ...any) {}
 	}
 	g := git.NewRunner(repo)
+	if cfg.GitTimeoutSec > 0 {
+		g.Timeout = time.Duration(cfg.GitTimeoutSec) * time.Second
+	}
 	gd, err := g.GitDir()
 	if err != nil {
 		return 0, fmt.Errorf("git dir: %w", err)
@@ -123,7 +126,7 @@ func Resolve(repo, mode string, cfg *config.Config, gen *ai.Generator, logf func
 	if remote, branch, ok := g.Upstream(); ok {
 		if err := retry.Do(cfg.RetryAttempts, func() error {
 			return g.Push(remote, branch)
-		}, 2*time.Second); err != nil {
+		}, 2*time.Second, git.IsTransient); err != nil {
 			return resolved, fmt.Errorf("push: %w", err)
 		}
 		logf("pushed %s/%s", remote, branch)

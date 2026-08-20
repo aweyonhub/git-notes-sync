@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,67 @@ func loadCfg(t *testing.T, p string) *Config {
 		t.Fatal(err)
 	}
 	return cfg
+}
+
+// collectScalarFields walks a config struct and returns dotted-key → kind
+// for every toml-tagged scalar field (bool/int/string). Arrays and blocks
+// with no scalar leaves are skipped (they are not settable via `gns config`).
+func collectScalarFields(typ reflect.Type, section string, out map[string]string) {
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		tag := f.Tag.Get("toml")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		dotted := tag
+		if section != "" {
+			dotted = section + "." + tag
+		}
+		switch f.Type.Kind() {
+		case reflect.Bool:
+			out[dotted] = "bool"
+		case reflect.Int:
+			out[dotted] = "int"
+		case reflect.String:
+			out[dotted] = "string"
+		case reflect.Slice:
+			// arrays (e.g. conflict.text_extensions) are intentionally not
+			// editable via `gns config set` — hand-edited
+		case reflect.Struct:
+			// nested table — recurse (the repos block has no scalar leaves)
+			collectScalarFields(f.Type, tag, out)
+		}
+	}
+}
+
+// TestConfigFieldsMatchStruct guards the configFields registry against
+// drift: every scalar struct field must be registered (and with the right
+// kind), and every registered entry must map to a real struct field.
+func TestConfigFieldsMatchStruct(t *testing.T) {
+	fields := map[string]string{}
+	collectScalarFields(reflect.TypeOf(Config{}), "", fields)
+
+	registered := map[string]string{}
+	for _, f := range configFields {
+		dotted := f.Key
+		if f.Section != "" {
+			dotted = f.Section + "." + f.Key
+		}
+		registered[dotted] = f.Kind
+	}
+
+	for dotted, kind := range fields {
+		if rk, ok := registered[dotted]; !ok {
+			t.Errorf("struct field %q has no configFields entry (register it, or it will be invisible to `gns config`)", dotted)
+		} else if rk != kind {
+			t.Errorf("field %q kind mismatch: struct=%s registry=%s", dotted, kind, rk)
+		}
+	}
+	for dotted := range registered {
+		if _, ok := fields[dotted]; !ok {
+			t.Errorf("configFields entry %q has no matching struct field (typo or renamed?)", dotted)
+		}
+	}
 }
 
 func TestSetKey_ReplaceExisting(t *testing.T) {

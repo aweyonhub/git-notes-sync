@@ -4,19 +4,23 @@ package git
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
 // Runner executes git commands inside a working directory.
 type Runner struct {
-	Dir string
-	Env []string
+	Dir     string
+	Env     []string
+	Timeout time.Duration // per-command deadline; 0 = no timeout
 }
 
 func NewRunner(dir string) *Runner { return &Runner{Dir: dir} }
@@ -39,8 +43,42 @@ func (e *CmdError) Error() string {
 
 func (e *CmdError) Unwrap() error { return e.Err }
 
+// IsTransient reports whether a git error is likely transient and worth
+// retrying. Permanent failures (auth, permissions, missing repo) are
+// reported as non-transient so callers can fail fast instead of sleeping
+// through pointless retries. Unknown error kinds default to transient —
+// the safe direction. Used by retry.Do's classifier.
+func IsTransient(err error) bool {
+	var ce *CmdError
+	if !errors.As(err, &ce) {
+		return true
+	}
+	s := strings.ToLower(ce.Stderr)
+	for _, p := range []string{
+		"authentication failed",
+		"permission denied",
+		"not a git repository",
+		"does not appear to be a git repository",
+		"repository not found",
+		"invalid username or password",
+		"returned error: 403",
+		"could not read username",
+	} {
+		if strings.Contains(s, p) {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *Runner) run(args ...string) (string, string, error) {
-	cmd := exec.Command("git", args...)
+	ctx := context.Background()
+	if r.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.Timeout)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = r.Dir
 	if len(r.Env) > 0 {
 		cmd.Env = append(os.Environ(), r.Env...)
@@ -49,6 +87,16 @@ func (r *Runner) run(args ...string) (string, string, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	err := cmd.Run()
+	if err != nil && ctx.Err() == context.DeadlineExceeded {
+		// The deadline killed git (network hang, credential prompt, etc.):
+		// surface a clear timeout error instead of the opaque kill status.
+		stderr := strings.TrimSpace(errb.String())
+		if stderr != "" {
+			stderr += "; "
+		}
+		stderr += fmt.Sprintf("timed out after %ds", int(r.Timeout/time.Second))
+		return out.String(), errb.String(), cmdErr(args, stderr, err)
+	}
 	return out.String(), errb.String(), err
 }
 
