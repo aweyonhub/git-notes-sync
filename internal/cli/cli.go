@@ -245,11 +245,13 @@ func cmdSyncAll(args []string) error {
 		if merged, err := config.Load(cfgPath, path); err == nil {
 			rcfg = merged
 		} else {
-			fmt.Printf("%swarn: %s repo config skipped: %v\n", logStamp(), disp, err)
+			fmt.Printf("%s[%s] warn: repo config skipped: %v\n", logStamp(), disp, err)
 		}
-		fmt.Printf("%s[%s] %s\n", logStamp(), disp, path)
+		// Every line carries the [repo] prefix (same format as the daemon)
+		// so multi-repo runs stay attributable; the first step reports the
+		// path, making a separate header line redundant.
 		rep := sync.Sync(path, rcfg, func(f string, a ...any) {
-			fmt.Printf("%s  %s\n", logStamp(), fmt.Sprintf(f, a...))
+			fmt.Printf("%s[%s] %s\n", logStamp(), disp, fmt.Sprintf(f, a...))
 		})
 		if rep.Err != nil {
 			fmt.Printf("%s[%s] ERROR: %v\n", logStamp(), disp, rep.Err)
