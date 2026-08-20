@@ -44,6 +44,10 @@ flags (per command):
   -c path      config file (default: global config + ./.notes-sync.toml)
   -p path      target repository (default: current directory)
 
+launcher flag (any command):
+  --log path   redirect output to a log file with rotation ([log] max_size_kb / max_backups);
+               gns install injects it into scheduler registrations automatically
+
 sync flags:
   -p path      sync one repo (default: current directory)
 

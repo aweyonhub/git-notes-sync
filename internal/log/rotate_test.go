@@ -1,6 +1,7 @@
 package log
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,5 +166,80 @@ func TestRotateDefaults(t *testing.T) {
 	}
 	if got := backupsOnDisk(t, dir, "gns.log"); len(got) != 0 {
 		t.Errorf("200KB under 500KB default must not rotate, got %v", got)
+	}
+}
+
+func TestRotateAndReopenOverThreshold(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "gns.log")
+	writeLog(t, p, 20) // 20KB > 10KB
+
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nf, err := RotateAndReopen(p, 10, 1, f)
+	if err != nil {
+		t.Fatalf("RotateAndReopen: %v", err)
+	}
+	defer nf.Close()
+
+	// the old handle must be closed (Windows rename requires it)
+	if _, err := f.Write([]byte("x")); err == nil {
+		t.Error("old handle must be closed after RotateAndReopen")
+	}
+
+	// new writes land in the fresh file
+	if _, err := fmt.Fprintln(nf, "fresh line"); err != nil {
+		t.Fatal(err)
+	}
+	if err := nf.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(fresh), "fresh line") {
+		t.Errorf("fresh file must receive new writes, got %q", fresh)
+	}
+	backup, err := os.ReadFile(p + ".1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backup) != 20*1024 {
+		t.Errorf("backup must hold the old content, got %d bytes", len(backup))
+	}
+}
+
+func TestRotateAndReopenUnderThreshold(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "gns.log")
+	writeLog(t, p, 1) // 1KB < 10KB
+
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nf, err := RotateAndReopen(p, 10, 1, f)
+	if err != nil {
+		t.Fatalf("RotateAndReopen: %v", err)
+	}
+	defer nf.Close()
+	if got := backupsOnDisk(t, dir, "gns.log"); len(got) != 0 {
+		t.Errorf("under-threshold reopen must not rotate, backups = %v", got)
+	}
+	if _, err := fmt.Fprintln(nf, "appended"); err != nil {
+		t.Fatal(err)
+	}
+	if err := nf.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "appended") {
+		t.Errorf("appended content must land in the same file, got %q", got)
 	}
 }

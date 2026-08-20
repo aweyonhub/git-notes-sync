@@ -82,9 +82,9 @@ func TestCronBlockInterval(t *testing.T) {
 	o := linuxTestOptions()
 	lines := cronBlock(o)
 	want := []string{
-		cronMarkerOpen,
+		cronMarkerOpen(o.Label),
 		"*/5 * * * * /home/alice/.local/bin/gns sync-all --log /home/alice/.local/state/git-notes-sync/com.git-notes-sync.log",
-		cronMarkerClose,
+		cronMarkerClose(o.Label),
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("cronBlock = %v, want %v", lines, want)
@@ -142,7 +142,7 @@ func TestMergeStripCrontab(t *testing.T) {
 	block := cronBlock(o)
 	existing := "SHELL=/bin/bash\n0 9 * * * backup-job\n"
 
-	merged := mergeCrontab(existing, block)
+	merged := mergeCrontab(existing, block, o.Label)
 	if !strings.Contains(merged, "SHELL=/bin/bash") || !strings.Contains(merged, "backup-job") {
 		t.Errorf("merge must preserve existing lines\n%s", merged)
 	}
@@ -151,18 +151,18 @@ func TestMergeStripCrontab(t *testing.T) {
 	}
 
 	// strip must restore the original content
-	if got := stripCrontab(merged); got != existing {
+	if got := stripCrontab(merged, o.Label); got != existing {
 		t.Errorf("strip = %q, want %q", got, existing)
 	}
 }
 
 func TestStripCrontabReplacesOldBlock(t *testing.T) {
 	o := linuxTestOptions()
-	old := mergeCrontab("user-line\n", cronBlock(o))
+	old := mergeCrontab("user-line\n", cronBlock(o), o.Label)
 	// re-install with a different interval → old block replaced, user line kept
 	o.Interval = 600
-	re := mergeCrontab(old, cronBlock(o))
-	if strings.Count(re, cronMarkerOpen) != 1 {
+	re := mergeCrontab(old, cronBlock(o), o.Label)
+	if strings.Count(re, cronMarkerOpen(o.Label)) != 1 {
 		t.Errorf("exactly one managed block expected\n%s", re)
 	}
 	if !strings.Contains(re, "*/10 * * * *") {
@@ -175,16 +175,63 @@ func TestStripCrontabReplacesOldBlock(t *testing.T) {
 
 func TestStripCrontabNoBlock(t *testing.T) {
 	in := "0 9 * * * job\n"
-	if got := stripCrontab(in); got != in {
+	if got := stripCrontab(in, "com.git-notes-sync"); got != in {
 		t.Errorf("strip without block must be a no-op, got %q", got)
 	}
 }
 
 func TestStripCrontabUnterminatedBlock(t *testing.T) {
 	// a block whose close marker was lost (e.g. hand-edited) is removed to EOF
-	in := "keep\n" + cronMarkerOpen + "\n*/5 * * * * x\n"
-	got := stripCrontab(in)
+	in := "keep\n" + cronMarkerOpen("com.git-notes-sync") + "\n*/5 * * * * x\n"
+	got := stripCrontab(in, "com.git-notes-sync")
 	if got != "keep\n" {
 		t.Errorf("unterminated block must be removed to EOF, got %q", got)
+	}
+}
+
+func TestCrontabMultipleLabelsCoexist(t *testing.T) {
+	o := linuxTestOptions()
+	base := "SHELL=/bin/bash\n0 9 * * * backup-job\n"
+	a := mergeCrontab(base, cronBlock(o), o.Label)
+
+	b := o
+	b.Label = "com.git-notes-sync.work"
+	b.Interval = 600
+	merged := mergeCrontab(a, cronBlock(b), b.Label)
+
+	if strings.Count(merged, cronMarkerOpen(o.Label)) != 1 {
+		t.Errorf("label A block must survive installing B\n%s", merged)
+	}
+	if strings.Count(merged, cronMarkerOpen(b.Label)) != 1 {
+		t.Errorf("label B block must be added\n%s", merged)
+	}
+	if !strings.Contains(merged, "*/5 * * * *") || !strings.Contains(merged, "*/10 * * * *") {
+		t.Errorf("both schedules must be present\n%s", merged)
+	}
+	if !strings.Contains(merged, "SHELL=/bin/bash") || !strings.Contains(merged, "backup-job") {
+		t.Errorf("user lines must survive\n%s", merged)
+	}
+
+	// uninstalling B removes only B's block
+	after := stripCrontab(merged, b.Label)
+	if strings.Contains(after, cronMarkerOpen(b.Label)) {
+		t.Errorf("B block must be removed\n%s", after)
+	}
+	if !strings.Contains(after, cronMarkerOpen(o.Label)) || !strings.Contains(after, "SHELL=/bin/bash") {
+		t.Errorf("A block and user lines must survive\n%s", after)
+	}
+	if got := stripCrontab(after, o.Label); got != base {
+		t.Errorf("removing A must restore the original content, got %q", got)
+	}
+}
+
+func TestCrontabHasManagedPerLabel(t *testing.T) {
+	o := linuxTestOptions()
+	merged := mergeCrontab("x\n", cronBlock(o), o.Label)
+	if !crontabHasManaged(merged, o.Label) {
+		t.Error("own label must be detected")
+	}
+	if crontabHasManaged(merged, "other-label") {
+		t.Error("other label must not be detected")
 	}
 }

@@ -277,11 +277,33 @@ gns install             # macOS：launchd 按配置 sync_interval 触发一次 `
 gns install --daemon    # 常驻：macOS KeepAlive / Linux systemd Restart=always / Windows ONLOGON 守护 `gns daemon`
                         #       （节奏由配置 sync_interval 控制；Linux 加 --cron 则用 @reboot）
 gns install -interval 600    # 改触发间隔（优先级：-interval > 配置 sync_interval > 默认 600s；Windows 最小 1 分钟）
-# 其他 flag：-exe path（默认本二进制）、-label s（默认 com.git-notes-sync）、-force（覆盖已有）
-gns uninstall           # 停止并删除注册（macOS：bootout + 删 plist；Linux：disable + 删 unit / crontab 块；Windows：schtasks /Delete）
+# 其他 flag：-exe path（默认本二进制）、-label s（默认 com.git-notes-sync，多套注册见下「--label」）、-force（覆盖已有）
+gns uninstall           # 停止并删除注册（macOS：bootout + 删 plist；Linux：disable + 删 unit / crontab 块；Windows：schtasks /Delete + 删 .vbe）
+                        # 各平台均保留历史日志文件（macOS ~/Library/Logs/<label>.log、Linux cron ~/.local/state/...、Windows %LOCALAPPDATA%\git-notes-sync\<label>.log；systemd 日志在 journal 由 journald 管理），需清理请手动删除
 ```
 
-**Windows（任务计划程序）**：用户级任务（`schtasks /Create`，无需管理员，登录后才运行——与 launchd Agent / systemd user unit 语义一致）。`-interval` 模式 = `/SC MINUTE`（最小 1 分钟，小于 60s 自动取 1）；`--daemon` 模式 = `/SC ONLOGON`（登录时启动常驻 daemon）。**后台不弹黑窗**（wscript + .vbe 实现，见 STATUS §2.4）。输出到 `%LOCALAPPDATA%\git-notes-sync\<label>.log`。查看/管理：`schtasks /Query /TN <label>`、`taskschd.msc`（任务计划程序）。任务名 = `-label`（默认 `com.git-notes-sync`）。⚠️ 任务计划程序没有 keep-alive 机制（launchd KeepAlive / systemd Restart=always 的等价物）——daemon 崩溃后不会自动重启（ONLOGON 任务在下次登录时再跑）。
+### `--label` — 一套注册一个标识（多套注册并存）
+
+`label` 是一套定时注册的标识（默认 `com.git-notes-sync`），`install` / `uninstall` / `logs` 三个命令都用它定位同一套注册：macOS 的 plist 文件名与 launchd Label、Linux systemd 的 unit 名（`<label>.service/.timer`）与 `journalctl -u <label>` 查询、cron 的托管块标记、Windows 的任务计划任务名与日志文件，全部由 label 派生。因此**用不同 label 可以并行跑多套互不干扰的注册**（不同节奏/不同模式），卸载和看日志也各自独立：
+
+```bash
+gns install --label work -interval 300        # 一套注册：5 分钟一轮
+gns install --label personal -interval 1800   # 另一套注册：30 分钟一轮
+gns logs --label work      # 只看 work 注册的日志
+gns logs --label personal  # 只看 personal 注册的日志
+gns uninstall --label work # 只卸 work 注册，personal 不受影响
+```
+
+规则：label 不能含空格和 `/`；同一 label 重复 `gns install` 会报错（用 `-force` 覆盖）；不带 `-label` 时即默认 `com.git-notes-sync`。
+
+> ⚠️ label 隔离的是"注册"而非"配置"：interval 模式注册的命令是 `gns sync-all`（不带 -c），**所有 label 都运行同一全局配置的 `repos`**，不同 label 只能区分节奏/模式/`-exe` 二进制。要让不同 label 跑不同仓库，用 daemon 模式并在 install 时用 `GNS_CONFIG` 指向不同配置文件（`-c` 路径会在安装时固化进注册）：
+>
+> ```bash
+> GNS_CONFIG=~/.config/git-notes-sync/work.toml     gns install --daemon --label work
+> GNS_CONFIG=~/.config/git-notes-sync/personal.toml gns install --daemon --label personal
+> ```
+
+**Windows（任务计划程序）**：用户级任务（`schtasks /Create`，无需管理员，登录后才运行——与 launchd Agent / systemd user unit 语义一致）。`-interval` 模式 = `/SC MINUTE`（最小 1 分钟，小于 60s 自动取 1）；`--daemon` 模式 = `/SC ONLOGON`（登录时启动常驻 daemon）。**后台不弹黑窗**（wscript + .vbe 实现，见 STATUS §2.4）。输出到 `%LOCALAPPDATA%\git-notes-sync\<label>.log`。查看/管理：`schtasks /Query /TN <label>`、`taskschd.msc`（任务计划程序）。任务名 = label（label 说明见上「--label」）。⚠️ 任务计划程序没有 keep-alive 机制（launchd KeepAlive / systemd Restart=always 的等价物）——daemon 崩溃后不会自动重启（ONLOGON 任务在下次登录时再跑）。
 
 **macOS（launchd）**：plist 位于 `~/Library/LaunchAgents/<label>.plist`，日志在 `~/Library/Logs/<label>.log(.err.log)`。plist 自动包含：
 
@@ -422,7 +444,7 @@ max_diff_bytes = 51200
 gns install             # systemd timer：按配置 sync_interval 触发一次 gns sync-all（无状态）
 gns install --daemon    # systemd service 常驻（Restart=always，崩溃自动拉起；节奏 = 配置 sync_interval）
 gns install -interval 600    # 改触发间隔
-# 其他 flag：-exe path（默认本二进制）、-label s（默认 com.git-notes-sync）、-force（覆盖已有）
+# 其他 flag 同总览：-exe / -label / -force（label 用法见 §3「--label」）
 gns uninstall           # disable + 删 unit 文件（~/.config/systemd/user/<label>.{service,timer}）
 ```
 
@@ -437,10 +459,10 @@ gns uninstall           # disable + 删 unit 文件（~/.config/systemd/user/<la
 ```bash
 gns install --cron              # 按配置 sync_interval（默认 600s → */10）跑 gns sync-all
 gns install --daemon --cron     # @reboot 启动 gns daemon（cron 无常驻守护，崩溃不重启）
-gns uninstall                   # 移除 crontab 中的托管块
+gns uninstall                   # 移除 crontab 中本 label 的托管块（其他 label 的块不受影响）
 ```
 
-在 crontab 中维护一个标记块（`# >>> gns-sync managed by gns install` ... `# <<< gns-sync <<<`），只增删该块、保留其他条目；日志重定向到 `~/.local/state/git-notes-sync/<label>.log`。注意：cron 无秒级/任意周期能力，interval 换算规则为**向上取整**：≤59min → `*/N`（300s→`*/5`、90s→`*/2` 实际 120s）；≤23h → `0 */H`（7200s→每 2 小时）；≥24h → 每天 0 点。环境极简（凭据用 `credential.helper store` 或免密 SSH key）、crontab 读写存在并发竞态（与系统其他 crontab 工具同时编辑时）。
+在 crontab 中维护标记块（`# >>> gns-sync <label> (do not edit) >>>` ... `# <<< gns-sync <label> <<<`，标记内嵌 label，多个 label 可并存、各自独立安装/卸载互不影响，用法见 §3「--label」），只增删对应 label 的块、保留其他条目；日志重定向到 `~/.local/state/git-notes-sync/<label>.log`。注意：cron 无秒级/任意周期能力，interval 换算规则为**向上取整**：≤59min → `*/N`（300s→`*/5`、90s→`*/2` 实际 120s）；≤23h → `0 */H`（7200s→每 2 小时）；≥24h → 每天 0 点。环境极简（凭据用 `credential.helper store` 或免密 SSH key）、crontab 读写存在并发竞态（与系统其他 crontab 工具同时编辑时）。
 
 ### macOS — launchd（推荐 `gns install` 一键，也可手写 plist）
 
@@ -485,7 +507,7 @@ launchctl bootout gui/$(id -u)/com.git-notes-sync                               
 gns install                 # **推荐方式** 任务计划每分钟触发一次 gns sync-all（schtasks MINUTE，最小 1 分钟；interval 取 -interval > 配置 sync_interval > 默认 600s → */10）
 gns install --daemon        # ONLOGON 登录时启动常驻 gns daemon（节奏 = 配置 sync_interval）
 gns install --daemon -interval 300  # 说明：daemon 模式 interval 由配置控制，flag 无效
-gns uninstall               # schtasks /Delete + 删日志
+gns uninstall               # schtasks /Delete + 删 .vbe 包装脚本（历史日志 <label>.log 保留，需清理可手动删除）
 ```
 
 **⚙️ 隐藏窗口机制（重要）**：`gns install` 在任务计划里注册的是 `wscript.exe` 执行一个 `.vbe` 包装脚本（`%LOCALAPPDATA%\git-notes-sync\<label>.vbe`），由它隐藏窗口启动 `gns ... --log <日志>`——**必须经 wscript + vbe 方式，直接注册 `gns.exe` 到任务计划会在每次触发时弹黑色控制台窗口**。日志写入 `%LOCALAPPDATA%\git-notes-sync\<label>.log`，查看 `gns logs`。

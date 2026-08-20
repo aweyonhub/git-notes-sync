@@ -2,6 +2,7 @@
 package log
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -109,4 +110,33 @@ func Cleanup(path string, maxBackups int) error {
 		}
 	}
 	return nil
+}
+
+// RotateAndReopen is Rotate + Cleanup for a log file the current process is
+// actively writing through the given handles (the launcher's stdout/stderr
+// redirection). The handles are closed first: on Windows Go opens files
+// without FILE_SHARE_DELETE so an open handle makes the rename fail, and on
+// POSIX the old handle would keep writing into the renamed backup (orphaned
+// stream). The file is then reopened and the fresh append handle returned;
+// the caller re-points os.Stdout/os.Stderr at it. The caller's old handles
+// are always closed, even on error.
+func RotateAndReopen(path string, maxSizeKB, maxBackups int, handles ...*os.File) (*os.File, error) {
+	for _, h := range handles {
+		if h != nil {
+			_ = h.Close()
+		}
+	}
+	var errs []error
+	if err := Rotate(path, maxSizeKB, maxBackups); err != nil {
+		errs = append(errs, err)
+	}
+	if err := Cleanup(path, maxBackups); err != nil {
+		errs = append(errs, err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		errs = append(errs, err)
+		return nil, errors.Join(errs...)
+	}
+	return f, errors.Join(errs...)
 }

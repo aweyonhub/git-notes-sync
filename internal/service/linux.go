@@ -56,11 +56,11 @@ func Uninstall(o LaunchOptions) error {
 func Loaded(o LaunchOptions) bool {
 	if o.Backend == BackendCron {
 		existing, err := crontabDump()
-		return err == nil && crontabHasManaged(existing)
+		return err == nil && crontabHasManaged(existing, o.Label)
 	}
 	// BackendAuto: check both systemd and cron
 	existing, err := crontabDump()
-	if err == nil && crontabHasManaged(existing) {
+	if err == nil && crontabHasManaged(existing, o.Label) {
 		return true
 	}
 	for _, kind := range []string{"timer", "service"} {
@@ -195,14 +195,14 @@ func installCron(o LaunchOptions) error {
 	if err != nil {
 		return err
 	}
-	if crontabHasManaged(existing) && !o.Force {
-		return fmt.Errorf("crontab already contains a gns-sync block (use -force to replace, or `gns uninstall` first)")
+	if crontabHasManaged(existing, o.Label) && !o.Force {
+		return fmt.Errorf("crontab already contains a gns-sync block for %q (use -force to replace, or `gns uninstall -label %s` first)", o.Label, o.Label)
 	}
 	// ensure the log dir exists before cron redirects into it
 	if err := os.MkdirAll(o.LogDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", o.LogDir, err)
 	}
-	if err := crontabWrite(mergeCrontab(existing, cronBlock(o))); err != nil {
+	if err := crontabWrite(mergeCrontab(existing, cronBlock(o), o.Label)); err != nil {
 		return err
 	}
 	// Kick off an immediate first run (interval mode) so the log exists right
@@ -231,10 +231,10 @@ func uninstallCron(o LaunchOptions) error {
 	if err != nil {
 		return err
 	}
-	if !crontabHasManaged(existing) {
-		return nil
+	if !crontabHasManaged(existing, o.Label) {
+		return nil // nothing registered for this label; leave other blocks alone
 	}
-	return crontabWrite(stripCrontab(existing))
+	return crontabWrite(stripCrontab(existing, o.Label))
 }
 
 // systemctl runs systemctl; when --user is implied we still pass it

@@ -63,14 +63,18 @@ func Run(globalPath string, once bool) error {
 			}
 		}
 		// Rotate the log every tick when running with --log redirection
-		// (GNS_LOG_FILE is set by the launcher). Without this the file would
-		// grow unbounded for the whole daemon lifetime.
+		// (GNS_LOG_FILE is set by the launcher). RotateAndReopen closes the
+		// current stdout/stderr handles first — Windows cannot rename an open
+		// file (Go opens without FILE_SHARE_DELETE), and on POSIX the open
+		// handle would keep writing into the renamed backup — then reopens
+		// and re-points the process output at the fresh file.
 		if lp := os.Getenv("GNS_LOG_FILE"); lp != "" {
-			if err := logPkg.Rotate(lp, cfg.Log.MaxSizeKB, cfg.Log.MaxBackups); err != nil {
+			f, err := logPkg.RotateAndReopen(lp, cfg.Log.MaxSizeKB, cfg.Log.MaxBackups, os.Stdout, os.Stderr)
+			if err != nil {
 				logf("log rotate: %v", err)
-			}
-			if err := logPkg.Cleanup(lp, cfg.Log.MaxBackups); err != nil {
-				logf("log cleanup: %v", err)
+			} else {
+				os.Stdout = f
+				os.Stderr = f
 			}
 		}
 

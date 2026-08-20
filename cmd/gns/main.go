@@ -72,6 +72,10 @@ func parseLogFlag(args []string) (string, []string) {
 		switch {
 		case strings.HasPrefix(a, "--log="):
 			logPath = strings.TrimPrefix(a, "--log=")
+			if logPath == "" {
+				fmt.Fprintln(os.Stderr, "error: --log requires a path argument")
+				os.Exit(2)
+			}
 		case a == "--log":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "error: --log requires a path argument")
