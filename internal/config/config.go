@@ -44,6 +44,30 @@ type Config struct {
 	Conflict Conflict `toml:"conflict"`
 	AI       AI       `toml:"ai"`
 	Log      Log      `toml:"log"`
+	Map      Map      `toml:"map"`
+}
+
+// Scope values for [[map.items]] entries (gns map feature).
+const (
+	ScopeMapRoot = "map-root" // path is prefixed with the machine's map_root
+	ScopeGitRoot = "git-root" // path is shared across machines
+)
+
+// Map configures the `gns map` feature (doc/git-notes-sync_map.md): mapping
+// local files into a dedicated git-root repository via a per-machine worktree.
+type Map struct {
+	GitRoot string    `toml:"git_root"` // integration repo path (user-managed)
+	MapRoot string    `toml:"map_root"` // machine namespace inside the repo
+	Mode    string    `toml:"mode"`     // auto | link | copy
+	Sync    bool      `toml:"sync"`     // run `gns map sync` from the scheduler
+	Items   []MapItem `toml:"items"`    // [[map.items]] mappings
+}
+
+// MapItem is one [[map.items]] entry: a repo-side path mapped to a local path.
+type MapItem struct {
+	Scope     string `toml:"scope"`
+	Path      string `toml:"path"`       // repo-relative, normalized, no ".."
+	LocalPath string `toml:"local_path"` // may contain ~/; unique identity
 }
 
 type Log struct {
@@ -95,6 +119,10 @@ func Defaults() *Config {
 		Log: Log{
 			MaxSizeKB:  500,
 			MaxBackups: 1,
+		},
+		Map: Map{
+			Mode: "auto",
+			Sync: false,
 		},
 	}
 }
@@ -294,6 +322,11 @@ func (c *Config) validate() error {
 	}
 	if c.GitTimeoutSec > 0 && c.GitTimeoutSec < 5 {
 		c.GitTimeoutSec = 5
+	}
+	switch c.Map.Mode {
+	case "", "auto", "link", "copy":
+	default:
+		return fmt.Errorf("map.mode must be one of auto|link|copy, got %q", c.Map.Mode)
 	}
 	return nil
 }

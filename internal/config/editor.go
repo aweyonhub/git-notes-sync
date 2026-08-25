@@ -47,6 +47,10 @@ var configFields = []FieldSpec{
 	{"ai", "agent_file", "string", "repo-relative agent instructions file"},
 	{"log", "max_size_kb", "int", "rotate log when exceeds this size (KB)"},
 	{"log", "max_backups", "int", "number of historical log copies to keep"},
+	{"map", "git_root", "string", "map feature: integration repo path"},
+	{"map", "map_root", "string", "map feature: machine namespace in the repo"},
+	{"map", "mode", "string", "map feature: auto | link | copy"},
+	{"map", "sync", "bool", "map feature: run `gns map sync` from the scheduler"},
 }
 
 // AllFields returns the list of settable scalar fields.
@@ -77,6 +81,8 @@ func UnsettableHint(dotted string) string {
 		return "use `gns repos add/del` to manage the repo list"
 	case section == "conflict" && key == "text_extensions":
 		return "text_extensions is an array; edit the config file directly"
+	case section == "map" && key == "items":
+		return "use `gnm config add/remove` to manage map items"
 	}
 	return ""
 }
