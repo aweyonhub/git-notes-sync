@@ -394,3 +394,95 @@ func (r *Runner) MarkerFiles() ([]string, error) {
 	}
 	return files, nil
 }
+
+// ---------- primitives for the map (worktree) feature ----------
+
+// Head returns the current HEAD commit hash ("" when the repo has no commits).
+func (r *Runner) Head() string {
+	s, err := r.Out("rev-parse", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return s
+}
+
+// BranchExists reports whether a local branch exists.
+func (r *Runner) BranchExists(branch string) bool {
+	_, err := r.Out("show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	// show-ref --quiet prints nothing; exit 0 = exists
+	return err == nil
+}
+
+// HasStaged reports whether the index differs from HEAD.
+func (r *Runner) HasStaged() (bool, error) {
+	_, _, err := r.run("diff", "--cached", "--quiet")
+	if err == nil {
+		return false, nil
+	}
+	var ce *exec.ExitError
+	if errors.As(err, &ce) && ce.ExitCode() == 1 {
+		return true, nil
+	}
+	return false, cmdErr([]string{"diff", "--cached", "--quiet"}, "", err)
+}
+
+// MergeFFOnly fast-forwards to ref, refusing to create a merge commit.
+func (r *Runner) MergeFFOnly(ref string) error {
+	_, err := r.Out("merge", "--ff-only", ref)
+	return err
+}
+
+// PullFFOnly runs `git pull --ff-only` in Dir.
+func (r *Runner) PullFFOnly() error {
+	_, err := r.Out("pull", "--ff-only")
+	return err
+}
+
+// ResetHard resets --hard to rev (branch tip or commit hash).
+func (r *Runner) ResetHard(rev string) error {
+	_, err := r.Out("reset", "--hard", rev)
+	return err
+}
+
+// ResetMixed resets HEAD and index to rev, keeping working files intact.
+func (r *Runner) ResetMixed(rev string) error {
+	_, err := r.Out("reset", "--mixed", rev)
+	return err
+}
+
+// UpdateRefBestEffort points ref at rev, ignoring failures (backup refs are
+// a safety net, not a requirement).
+func (r *Runner) UpdateRefBestEffort(ref, rev string) {
+	_, _ = r.Out("update-ref", ref, rev)
+}
+
+// WorktreeAdd creates a linked worktree at dir with a new branch based on base.
+func (r *Runner) WorktreeAdd(branch, dir, base string) error {
+	_, err := r.Out("worktree", "add", "-b", branch, dir, base)
+	return err
+}
+
+// LsTreeHead lists file paths under sub (repo-relative, "" = whole tree)
+// from HEAD. Empty when the path has no tracked files.
+func (r *Runner) LsTreeHead(sub string) ([]string, error) {
+	args := []string{"ls-tree", "-r", "--name-only", "HEAD"}
+	if sub != "" {
+		args = append(args, "--", sub)
+	}
+	out, _, err := r.run(args...)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, ln := range strings.Split(out, "\n") {
+		if ln != "" {
+			paths = append(paths, ln)
+		}
+	}
+	return paths, nil
+}
+
+// ShowHeadFile prints a blob at path from HEAD ("HEAD:<path>").
+func (r *Runner) ShowHeadFile(path string) (string, error) {
+	return r.Out("show", "HEAD:"+path)
+}
