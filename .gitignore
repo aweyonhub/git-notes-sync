@@ -1,6 +1,7 @@
 # binaries (local build output)
 /gns
 /gns.exe
+/gnm.exe
 /dist
 
 # build artifacts

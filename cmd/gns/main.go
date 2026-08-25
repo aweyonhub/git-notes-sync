@@ -55,10 +55,27 @@ func main() {
 		os.Stderr = f
 	}
 
-	if err := cli.Run(filteredArgs); err != nil {
+	if err := cli.Run(expandGnmAlias(os.Args[0], filteredArgs)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// expandGnmAlias translates an invocation as `gnm` (via argv[0]) into the
+// long form, so one binary serves both entries (doc/git-notes-sync_map.md
+// §6.1): gnm X… → gns map X…; gnm config X… → gns map-config X…
+func expandGnmAlias(argv0 string, args []string) []string {
+	base := strings.ToLower(strings.TrimSuffix(filepath.Base(argv0), ".exe"))
+	if base != "gnm" {
+		return args
+	}
+	if len(args) == 0 {
+		return []string{"map"}
+	}
+	if args[0] == "config" {
+		return append([]string{"map-config"}, args[1:]...)
+	}
+	return append([]string{"map"}, args...)
 }
 
 // parseLogFlag extracts a --log <path> or --log=<path> flag from anywhere in

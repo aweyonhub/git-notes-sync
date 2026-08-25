@@ -77,3 +77,18 @@ path = "~/notes"
 [[repos]]
 name = "wiki"
 path = "~/work/wiki"
+
+# ---- map（把本机文件纳入 Git 仓库统一管理；短命令 gnm） -----------------
+# 完整设计见 doc/git-notes-sync_map.md；一般用 `gnm config ...` 维护本节。
+[map]
+git_root = "E:/map-repo"       # 集成仓库（用户手动 clone/创建）
+map_root = "winTx"             # 当前机器在仓库中的命名空间
+mode = "auto"                  # auto (Windows→copy / Unix→link) | link | copy
+sync = false                   # true 时现有调度器每轮额外执行 `gns map sync`
+
+# 映射项：scope = "map-root" 存到 <map_root>/ 前缀下（机器专属）；
+#         scope = "git-root" 直接存公共区（跨机器共享）。
+# [[map.items]]
+# scope = "map-root"
+# path = "pi-skill"             # 仓库内相对路径
+# local_path = "~/.pi/skills"   # 本机真实路径（~ 跨机器可解析）

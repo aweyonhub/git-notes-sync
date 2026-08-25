@@ -10,6 +10,7 @@ import (
 
 	"github.com/aweyonhub/git-notes-sync/internal/config"
 	logPkg "github.com/aweyonhub/git-notes-sync/internal/log"
+	"github.com/aweyonhub/git-notes-sync/internal/mapsync"
 	"github.com/aweyonhub/git-notes-sync/internal/sync"
 )
 
@@ -59,6 +60,16 @@ func Run(globalPath string, once bool) error {
 			})
 			if rep.Err != nil {
 				logf("[%s] ERROR: %v", disp, rep.Err)
+			}
+		}
+		// map feature rides the same scheduler: one extra `gns map sync`
+		// per tick when map.sync=true (spec §7.4). Not-initialized machines
+		// skip silently; failures never break the repo loop.
+		if cfg.Map.Sync {
+			if err := mapsync.RunSchedulerTick(cfg, func(f string, a ...any) {
+				logf("[map] %s", fmt.Sprintf(f, a...))
+			}); err != nil {
+				logf("[map] ERROR: %v", err)
 			}
 		}
 		// Rotate the log every tick when running with --log redirection

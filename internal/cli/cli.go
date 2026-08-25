@@ -15,6 +15,7 @@ import (
 	"github.com/aweyonhub/git-notes-sync/internal/commit"
 	"github.com/aweyonhub/git-notes-sync/internal/config"
 	"github.com/aweyonhub/git-notes-sync/internal/daemon"
+	"github.com/aweyonhub/git-notes-sync/internal/mapsync"
 	reposPkg "github.com/aweyonhub/git-notes-sync/internal/repos"
 	"github.com/aweyonhub/git-notes-sync/internal/service"
 	"github.com/aweyonhub/git-notes-sync/internal/sync"
@@ -32,6 +33,8 @@ usage:
   gns resolve [flags]     list or resolve persisted conflict markers
   gns repos <cmd>         manage the repo list: list | add | del
   gns config <cmd>        inspect / edit config: list | get | set | unset
+  gns map <cmd>           map local files into a git repo (alias: gnm)
+  gns map-config <cmd>    configure map mappings (alias: gnm config)
   gns logs [flags]        show scheduler logs (launchd / systemd / Task Scheduler)
   gns install [flags]     install launchd (macOS) / systemd-cron (Linux) / Task Scheduler (Windows)
   gns uninstall [flags]   remove the registered service
@@ -85,8 +88,12 @@ install flags (macOS launchd / Linux systemd-cron / Windows Task Scheduler):
   -label s     launchd label / systemd unit / task name (default: com.git-notes-sync)
   -force       overwrite an existing plist
 
-uninstall flags:
+  uninstall flags:
   -label s     launchd label (default: com.git-notes-sync)
+
+map subcommands (short form: gnm …):
+  gnm init / status / add / get / commit / pull / push / sync
+  gnm config git-root|map-root|add|remove|list|validate|save|load
 `
 
 // Run dispatches a command line. Returns the process error, if any.
@@ -114,6 +121,10 @@ func Run(args []string) error {
 		return cmdRepos(rest)
 	case "config":
 		return cmdConfig(rest)
+	case "map":
+		return cmdMap(rest)
+	case "map-config", "map_config":
+		return cmdMapConfig(rest)
 	case "daemon":
 		return cmdDaemon(rest)
 	case "logs":
@@ -231,7 +242,7 @@ func cmdSyncAll(args []string) error {
 		return err
 	}
 	repos := cfg.Repos.All()
-	if len(repos) == 0 {
+	if len(repos) == 0 && !cfg.Map.Sync {
 		return errors.New("no repos configured (use `gns repos add <path>` or set repos in " + cfgPath + ")")
 	}
 	var failed bool
@@ -255,6 +266,16 @@ func cmdSyncAll(args []string) error {
 		})
 		if rep.Err != nil {
 			fmt.Printf("%s[%s] ERROR: %v\n", logStamp(), disp, rep.Err)
+			failed = true
+		}
+	}
+	// map feature: the existing sync entry also drives `gns map sync` when
+	// enabled (spec §7.4) — one scheduler, both features.
+	if cfg.Map.Sync {
+		if err := mapsync.RunSchedulerTick(cfg, func(f string, a ...any) {
+			fmt.Printf("%s[map] %s\n", logStamp(), fmt.Sprintf(f, a...))
+		}); err != nil {
+			fmt.Printf("%s[map] ERROR: %v\n", logStamp(), err)
 			failed = true
 		}
 	}

@@ -55,6 +55,22 @@ gns daemon        # 轻量 daemon（Windows 首选，timer 轮询多仓库）
 gns version
 ```
 
+### map：把本机文件纳入 Git 仓库（短命令 `gnm`）
+
+`map` 通过映射把 dotfile、config、skill、脚本等本机文件统一纳入一个专用 git-root 仓库，跨机器同步而不改变文件的日常使用方式（软链接或增量复制）。设计见 [doc/git-notes-sync_map.md](./doc/git-notes-sync_map.md)。
+
+```bash
+gnm config git-root <path>      # 指向集成仓库；map-root <name> 设置机器命名空间
+gnm config add -a <repo> <local>   # 增加映射（-A 为公共区 scope）
+gnm init                        # 创建机器 worktree 并应用全部映射
+gnm status                      # 状态 + 每个映射事实 + 下一步命令
+gnm add <path...> | -A          # 选择本机版本并暂存（get 采用 HEAD 版本）
+gnm commit / push / sync        # 提交；人工确认推送（armed .syncable）；自动同步
+gnm pull [-f]                   # 冲突/分叉后的恢复入口（不动真实文件）
+```
+
+安全模型：首次与阻断后必须人工确认（`.syncable` 闸门），唯一冲突点在 worktree 合并 git-root，网络等异常不伪装成冲突。启用定时：`gns config set map.sync true`，现有调度器每轮额外执行一次 `gns map sync`。
+
 ### 定时调度
 
 - **macOS**：`gns install` 一键注册 launchd LaunchAgent（开机自启）：
@@ -134,6 +150,7 @@ internal/
   commit/   提交时机（debounce/max_wait/state）与消息生成
   ai/       OpenAI-compatible API / CLI 双后端，统一降级
   sync/     同步引擎、冲突处理、resolve、status、marker 解析
+  mapsync/  map 功能：本机文件映射进 git-root（worktree/link/copy/.syncable）
   daemon/   轻量 timer daemon（配置变更自动重载）
   cli/      命令分发
 ```
