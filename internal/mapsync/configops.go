@@ -1,0 +1,360 @@
+// configops.go: the `gnm config` operations — item block editing at line
+// level (comments and unrelated keys survive, same approach as the repos
+// package), validation, and the per-machine config snapshot (spec §3/§4).
+package mapsync
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/BurntSushi/toml"
+	"github.com/aweyonhub/git-notes-sync/internal/config"
+)
+
+// ---------- list / validate ----------
+
+// ListItems renders the effective mapping table.
+func ListItems(cfg *config.Config) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "git-root: %s\n", cfg.Map.GitRoot)
+	fmt.Fprintf(&b, "map-root: %s\n", cfg.Map.MapRoot)
+	fmt.Fprintf(&b, "mode:     %s\n", cfg.Map.Mode)
+	fmt.Fprintf(&b, "sync:     %v\n", cfg.Map.Sync)
+	if len(cfg.Map.Items) == 0 {
+		b.WriteString("items:    (none)\n")
+		return b.String()
+	}
+	b.WriteString("items:\n")
+	for _, it := range cfg.Map.Items {
+		rp, err := RepoPathOf(it, cfg.Map.MapRoot)
+		if err != nil {
+			rp = "<invalid>"
+		}
+		fmt.Fprintf(&b, "  %-24s → %s  (%s ← %s)\n", rp, it.LocalPath, it.Scope, it.Path)
+	}
+	return b.String()
+}
+
+// ValidateReport returns every problem with the current [map] section.
+func ValidateReport(cfg *config.Config) []error {
+	var errs []error
+	if cfg.Map.GitRoot == "" {
+		errs = append(errs, errors.New("map.git_root is not set"))
+	} else if st, err := os.Stat(NormalizeLocal(cfg.Map.GitRoot)); err != nil || !st.IsDir() {
+		errs = append(errs, fmt.Errorf("map.git_root does not exist or is not a directory: %s", cfg.Map.GitRoot))
+	}
+	if err := ValidMapRoot(cfg.Map.MapRoot); err != nil {
+		errs = append(errs, fmt.Errorf("map.map_root: %v", err))
+	}
+	switch cfg.Map.Mode {
+	case "auto", "link", "copy", "":
+	default:
+		errs = append(errs, fmt.Errorf("map.mode must be auto|link|copy, got %q", cfg.Map.Mode))
+	}
+	for i, it := range cfg.Map.Items {
+		if _, err := RepoPathOf(it, max(cfg.Map.MapRoot, "x")); err != nil {
+			errs = append(errs, fmt.Errorf("item #%d (%s): %v", i+1, it.LocalPath, err))
+			continue
+		}
+		l := NormalizeLocal(it.LocalPath)
+		if !strings.HasPrefix(l, "/") && !filepath.IsAbs(l) && !strings.Contains(l, ":") {
+			errs = append(errs, fmt.Errorf("item #%d: local path should be absolute or ~/: %s", i+1, it.LocalPath))
+		}
+	}
+	if cfg.Map.MapRoot != "" {
+		errs = append(errs, ValidateItems(cfg.Map.Items, cfg.Map.MapRoot)...)
+	}
+	return errs
+}
+
+func max(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// ---------- [[map.items]] textual editing ----------
+
+// AddItem appends one mapping to the user config and — when the worktree is
+// already initialized — immediately materializes it and disarms .syncable
+// (spec §4.5). cfg must be the freshly loaded config for cfgPath.
+func AddItem(cfgPath string, cfg *config.Config, scope, repoPath, local string, env *Env) error {
+	item := config.MapItem{
+		Scope:     scope,
+		Path:      filepath.ToSlash(filepath.Clean(strings.TrimSpace(repoPath))),
+		LocalPath: local,
+	}
+	if item.Scope != config.ScopeMapRoot && item.Scope != config.ScopeGitRoot {
+		return fmt.Errorf("invalid scope %q (use -a for map-root scope, -A for git-root scope)", scope)
+	}
+	if cfg.Map.MapRoot == "" {
+		return errors.New("set map-root first (`gnm config map-root <name>`)")
+	}
+	if _, err := RepoPathOf(item, cfg.Map.MapRoot); err != nil {
+		return err
+	}
+	norm := NormalizeLocal(item.LocalPath)
+	key := LocalKey(norm)
+	for _, ex := range cfg.Map.Items {
+		if LocalKey(NormalizeLocal(ex.LocalPath)) == key {
+			return fmt.Errorf("local path already mapped: %s", ex.LocalPath)
+		}
+		rpEx, _ := RepoPathOf(ex, cfg.Map.MapRoot)
+		rpNew, _ := RepoPathOf(item, cfg.Map.MapRoot)
+		if rpEx == rpNew {
+			return fmt.Errorf("repo path already mapped: %s", rpNew)
+		}
+	}
+	if errs := ValidateItems(append(append([]config.MapItem{}, cfg.Map.Items...), item), cfg.Map.MapRoot); len(errs) > 0 {
+		return errs[0]
+	}
+
+	f, err := os.OpenFile(cfgPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	block := fmt.Sprintf("\n[[map.items]]\nscope = %q\npath = %q\nlocal_path = %q\n",
+		item.Scope, item.Path, expandHomeTilde(item.LocalPath))
+	if _, err := f.WriteString(block); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	cfg.Map.Items = append(cfg.Map.Items, item)
+
+	if env != nil { // initialized: apply now and demand re-confirmation (§4.5)
+		if err := applyMappingItem(env, item); err != nil {
+			return fmt.Errorf("apply mapping: %w", err)
+		}
+		RemoveSyncable(env)
+		env.logf("map %s: mapping applied; .syncable removed — push again to re-arm", env.MapRoot)
+	}
+	return nil
+}
+
+// expandHomeTilde keeps ~/ local paths portable across machines (§3.3);
+// anything else is stored normalized.
+func expandHomeTilde(local string) string {
+	norm := NormalizeLocal(local)
+	if h, err := os.UserHomeDir(); err == nil && strings.HasPrefix(norm, h) {
+		return "~" + norm[len(h):]
+	}
+	return norm
+}
+
+// RemoveItems deletes mappings by exact local path (the unique identity),
+// or all of them with all=true; initialized worktrees get each removal
+// applied and lose .syncable (spec §4.5).
+func RemoveItems(cfgPath string, cfg *config.Config, locals []string, all bool, env *Env) error {
+	targets := map[string]bool{} // comparison keys
+	var removedDefs []config.MapItem
+	for _, l := range locals {
+		targets[LocalKey(NormalizeLocal(l))] = true
+	}
+	matched := func(it config.MapItem) bool {
+		if all {
+			return true
+		}
+		return targets[LocalKey(NormalizeLocal(it.LocalPath))]
+	}
+
+	var keep []config.MapItem
+	for _, it := range cfg.Map.Items {
+		if matched(it) {
+			removedDefs = append(removedDefs, it)
+		} else {
+			keep = append(keep, it)
+		}
+	}
+	if len(removedDefs) == 0 {
+		if all {
+			return nil // nothing to remove is fine for --all
+		}
+		return fmt.Errorf("no mapping for %v", locals)
+	}
+
+	if _, err := removeItemBlocksWhere(cfgPath, matched); err != nil {
+		return err
+	}
+	cfg.Map.Items = keep
+
+	if env != nil {
+		for _, it := range removedDefs {
+			if err := removeMappingItem(env, it); err != nil {
+				return fmt.Errorf("unmap %s: %w", it.LocalPath, err)
+			}
+		}
+		RemoveSyncable(env)
+		env.logf("map %s: %d mapping(s) removed; .syncable removed — review with `gnm status`", env.MapRoot, len(removedDefs))
+	}
+	return nil
+}
+
+// removeItemBlocksWhere drops every `[[map.items]]` block whose parsed item
+// satisfies match. Returns how many blocks were removed. A missing config
+// file simply has nothing to remove.
+func removeItemBlocksWhere(cfgPath string, match func(config.MapItem) bool) (int, error) {
+	content, err := os.ReadFile(cfgPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	lines := strings.Split(string(content), "\n")
+	out := make([]string, 0, len(lines))
+	removed := 0
+	i := 0
+	for i < len(lines) {
+		if strings.TrimSpace(lines[i]) == "[[map.items]]" {
+			j := i + 1
+			var it config.MapItem
+			for j < len(lines) {
+				t := strings.TrimSpace(lines[j])
+				if strings.HasPrefix(t, "[") {
+					break // next header ends this block
+				}
+				if v, ok := parseItemKV(t, "scope"); ok {
+					it.Scope = v
+				}
+				if v, ok := parseItemKV(t, "path"); ok {
+					it.Path = v
+				}
+				if v, ok := parseItemKV(t, "local_path"); ok {
+					it.LocalPath = v
+				}
+				j++
+			}
+			if match(it) {
+				i = j
+				removed++
+				continue
+			}
+		}
+		out = append(out, lines[i])
+		i++
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	text := strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+	return removed, os.WriteFile(cfgPath, []byte(text), 0o644)
+}
+
+// parseItemKV extracts `key = "value"` from a TOML line (repos.parseKV twin).
+func parseItemKV(line, key string) (string, bool) {
+	rest := strings.TrimLeft(line, " \t")
+	if !strings.HasPrefix(rest, key) {
+		return "", false
+	}
+	rest = strings.TrimLeft(rest[len(key):], " \t")
+	if !strings.HasPrefix(rest, "=") {
+		return "", false
+	}
+	rest = strings.TrimSpace(rest[1:])
+	if len(rest) >= 2 && rest[0] == '"' && rest[len(rest)-1] == '"' {
+		rest = rest[1 : len(rest)-1]
+	}
+	return rest, rest != ""
+}
+
+// ---------- snapshot (save / load) ----------
+
+type snapshotFile struct {
+	Map config.Map `toml:"map"`
+}
+
+// SaveSnapshot writes the current user [map] section into the worktree as
+// `.gns/map/<map-root>.toml`. It never stages, commits or pushes (§4.6).
+func SaveSnapshot(env *Env) error {
+	path := filepath.Join(env.Worktree, filepath.FromSlash(SnapshotRel(env.MapRoot)))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	var buf strings.Builder
+	buf.WriteString("# machine map snapshot (managed by `gnm config save`)\n")
+	if err := toml.NewEncoder(&buf).Encode(snapshotFile{Map: snapshotSection(*env.Cfg)}); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(buf.String()), 0o644)
+}
+
+// snapshotSection copies only the fields that belong in a snapshot (drop the
+// scheduler switch: whether THIS machine auto-syncs is not shared state).
+func snapshotSection(c config.Config) config.Map {
+	items := make([]config.MapItem, len(c.Map.Items))
+	copy(items, c.Map.Items)
+	return config.Map{
+		GitRoot: c.Map.GitRoot,
+		MapRoot: c.Map.MapRoot,
+		Mode:    c.Map.Mode,
+		Items:   items,
+	}
+}
+
+// LoadSnapshot imports `.gns/map/<map-root>.toml` from git-root HEAD into
+// the user config. Only legal before init; never touches real files (§4.6).
+func LoadSnapshot(cfgPath string, cfg *config.Config, mapRootArg string, logf func(string, ...any)) error {
+	if cfg.Map.GitRoot == "" {
+		return errors.New("map.git_root is not set; point it at the repo first")
+	}
+	effective := mapRootArg
+	if effective == "" {
+		effective = cfg.Map.MapRoot
+	}
+	if effective == "" {
+		return errors.New("no map-root given and none configured; run `gnm config map-root <name>`")
+	}
+	g := newRunner(NormalizeLocal(cfg.Map.GitRoot), cfg)
+	blob, err := g.ShowHeadFile(SnapshotRel(effective))
+	if err != nil {
+		return fmt.Errorf("read %s from git-root HEAD: %w", SnapshotRel(effective), err)
+	}
+	var snap snapshotFile
+	if _, err := toml.Decode(blob, &snap); err != nil {
+		return fmt.Errorf("parse snapshot: %w", err)
+	}
+
+	// scalars via the standard editor (line-level, comments preserved)
+	for _, kv := range [][2]string{
+		{"git_root", snap.Map.GitRoot},
+		{"map_root", snap.Map.MapRoot},
+		{"mode", snap.Map.Mode},
+	} {
+		if kv[1] == "" {
+			continue
+		}
+		if err := config.SetKey(cfgPath, "map", kv[0], kv[1]); err != nil {
+			return err
+		}
+	}
+	// items: replace wholesale
+	if _, err := removeItemBlocksWhere(cfgPath, func(config.MapItem) bool { return true }); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(cfgPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	for _, it := range snap.Map.Items {
+		if _, err := f.WriteString(fmt.Sprintf("\n[[map.items]]\nscope = %q\npath = %q\nlocal_path = %q\n",
+			it.Scope, it.Path, it.LocalPath)); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	f.Close()
+
+	cfg.Map = snapshotSection(config.Config{Map: snap.Map})
+	if logf != nil {
+		logf("map %s: imported %d item(s) from snapshot", snap.Map.MapRoot, len(snap.Map.Items))
+		logf("next: `gnm init` applies every mapping")
+	}
+	return nil
+}

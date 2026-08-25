@@ -1,0 +1,501 @@
+// engine_test.go: real-git integration coverage of the map lifecycle —
+// init → choose → commit → push → sync → conflict → pull → recover,
+// plus the .syncable gate semantics (spec §7/§8).
+package mapsync
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/aweyonhub/git-notes-sync/internal/config"
+)
+
+// ---------- helpers ----------
+
+func gitCmd(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s (in %s): %v\n%s", strings.Join(args, " "), dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func pinGitIdentity(t *testing.T, dir string) {
+	t.Helper()
+	gitCmd(t, dir, "config", "user.name", "test")
+	gitCmd(t, dir, "config", "user.email", "test@example.com")
+	gitCmd(t, dir, "config", "core.autocrlf", "false")
+	gitCmd(t, dir, "config", "pull.rebase", "false")
+}
+
+func mappedLocal(t *testing.T, home string) string {
+	t.Helper()
+	p := filepath.Join(home, "file.txt")
+	writeFile(t, p, "V1\n")
+	return p
+}
+
+func mappedWtFile(env *Env) string {
+	return filepath.Join(env.Worktree, "tm", "dot", "file.txt")
+}
+
+func gitRootMappedPath(env *Env) string {
+	return filepath.Join(env.GitRoot, "tm", "dot", "file.txt")
+}
+
+// newTestEnv builds a bare remote + cloned git-root with an initial commit,
+// and an Env in copy mode rooted under a hermetic GNS_APP_DATA. Returns the
+// bare remote path too, so failure-path tests can break and repair origin.
+func newTestEnv(t *testing.T) (*Env, string, string) {
+	t.Helper()
+	tmp := t.TempDir()
+	t.Setenv("GNS_APP_DATA", filepath.Join(tmp, "app"))
+
+	remote := filepath.Join(tmp, "remote.git")
+	gitCmd(t, tmp, "init", "--bare", "-b", "main", "remote.git")
+
+	gitRoot := filepath.Join(tmp, "gitroot")
+	gitCmd(t, tmp, "-c", "core.autocrlf=false", "clone", "remote.git", "gitroot")
+	pinGitIdentity(t, gitRoot)
+	writeFile(t, filepath.Join(gitRoot, "README.md"), "# map repo\n")
+	gitCmd(t, gitRoot, "add", "-A")
+	gitCmd(t, gitRoot, "commit", "-m", "init")
+	gitCmd(t, gitRoot, "push", "-u", "origin", "main")
+
+	cfg := config.Defaults()
+	cfg.RetryAttempts = 1 // keep failure-path tests fast
+	cfg.Map.GitRoot = gitRoot
+	cfg.Map.MapRoot = "tm"
+	cfg.Map.Mode = "copy" // link mode has its own opt-in test
+
+	env, err := ResolveEnv(cfg, filepath.Join(tmp, "user-config.toml"), func(f string, a ...any) { t.Logf(f, a...) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env, remote, filepath.Join(tmp, "home")
+}
+
+// setupMapped builds an Env with one map-root scoped mapping and runs Init.
+// The gate stays unarmed; callers drive the confirm flow themselves. The
+// bare remote path is returned for peers pushing concurrent changes.
+func setupMapped(t *testing.T, mode string) (env *Env, remote, local, home string) {
+	t.Helper()
+	env, remote, home = newTestEnv(t)
+	if mode != "" {
+		env.Mode = ResolveMode(mode)
+		env.Cfg.Map.Mode = mode
+	}
+	local = mappedLocal(t, home)
+	env.Cfg.Map.Items = []config.MapItem{
+		{Scope: config.ScopeMapRoot, Path: "dot/file.txt", LocalPath: local},
+	}
+	if err := Init(env); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	return env, remote, local, home
+}
+
+// peerClone creates a second machine from the BARE remote (never from the
+// non-bare git-root: pushing into its checked-out branch is rejected).
+func peerClone(t *testing.T, remote string) string {
+	t.Helper()
+	dir := t.TempDir()
+	peer := filepath.Join(dir, "peer")
+	gitCmd(t, dir, "-c", "core.autocrlf=false", "clone", remote, "peer")
+	pinGitIdentity(t, peer)
+	return peer
+}
+
+// armGate runs the manual confirm flow: `add -A` chooses local content and
+// also stages the .gns snapshot init wrote; commit; push arms the gate.
+func armGate(t *testing.T, env *Env) {
+	t.Helper()
+	if err := Add(env, nil, true); err != nil {
+		t.Fatalf("add -A: %v", err)
+	}
+	if err := Commit(env, ""); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := Push(env); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if !HasSyncable(env) {
+		t.Fatal(".syncable missing after a fully successful push")
+	}
+}
+
+// ---------- tests ----------
+
+func TestInitPublishesLocalThenPushSyncRoundtrip(t *testing.T) {
+	env, _, local, _ := setupMapped(t, "")
+
+	// init published the local version into the worktree; gate stays off
+	if got := readFile(t, mappedWtFile(env)); got != "V1\n" {
+		t.Fatalf("worktree after init = %q", got)
+	}
+	if HasSyncable(env) {
+		t.Fatal(".syncable created by init — spec forbids it")
+	}
+
+	armGate(t, env)
+	if got := readFile(t, gitRootMappedPath(env)); got != "V1\n" {
+		t.Fatalf("git-root after push = %q", got)
+	}
+
+	// automatic round: edit locally → sync converges remote, keeps the gate
+	writeFile(t, local, "V2\n")
+	if err := Sync(env); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if got := readFile(t, gitRootMappedPath(env)); got != "V2\n" {
+		t.Fatalf("git-root after sync = %q", got)
+	}
+	if !HasSyncable(env) {
+		t.Fatal(".syncable lost after successful sync")
+	}
+	if b, _ := ReadBlocked(env); b != nil {
+		t.Fatalf("blocked state left behind: %+v", b)
+	}
+}
+
+func TestSyncConflictBlocksAndRecoveryFlow(t *testing.T) {
+	env, remote, local, _ := setupMapped(t, "")
+	armGate(t, env)
+
+	// another machine moves the same content forward
+	peer := peerClone(t, remote)
+	writeFile(t, filepath.Join(peer, "tm", "dot", "file.txt"), "B-remote\n")
+	gitCmd(t, peer, "add", "-A")
+	gitCmd(t, peer, "commit", "-m", "b change")
+	gitCmd(t, peer, "push")
+
+	// local diverges on the same lines
+	writeFile(t, local, "C-local\n")
+
+	err := Sync(env)
+	if err == nil || !strings.Contains(err.Error(), "merge conflict") {
+		t.Fatalf("expected merge conflict error, got %v", err)
+	}
+	if HasSyncable(env) {
+		t.Fatal(".syncable survived a confirmed conflict")
+	}
+	blocked, rerr := ReadBlocked(env)
+	if rerr != nil || blocked == nil || blocked.Reason != "merge-conflict" || len(blocked.Conflicts) == 0 {
+		t.Fatalf("blocked record missing/incomplete: %+v, %v", blocked, rerr)
+	}
+	// worktree restored to its committed pre-merge content; the real file
+	// was never touched by the failed merge
+	for _, p := range []string{mappedWtFile(env), local} {
+		if got := readFile(t, p); got != "C-local\n" {
+			t.Fatalf("pre-merge restore failed for %s: %q", p, got)
+		}
+	}
+
+	// recovery: pull re-bases onto git-root without touching any working file
+	if err := Pull(env, false); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if got := readFile(t, local); got != "C-local\n" {
+		t.Fatalf("pull touched the real file: %q", got)
+	}
+
+	// get adopts HEAD (the peer's version), deploying it everywhere; commit
+	// becomes a harmless no-op when get already converged index and worktree
+	if err := Get(env, []string{local}, false); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got := readFile(t, local); got != "B-remote\n" {
+		t.Fatalf("get did not deploy HEAD to local: %q", got)
+	}
+	if err := Commit(env, "resolve map conflict"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Push(env); err != nil {
+		t.Fatalf("push after recovery: %v", err)
+	}
+	if !HasSyncable(env) {
+		t.Fatal(".syncable not re-created after recovery push")
+	}
+	if got := readFile(t, gitRootMappedPath(env)); got != "B-remote\n" {
+		t.Fatalf("git-root after recovery = %q", got)
+	}
+}
+
+func TestAddConfirmsDeletionAndGetRestoresFromHead(t *testing.T) {
+	env, _, local, _ := setupMapped(t, "")
+	armGate(t, env)
+
+	// phase A: delete locally, add stages it — but get can still restore
+	// from HEAD before the deletion is committed
+	if err := os.Remove(local); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(env, []string{local}, false); err != nil {
+		t.Fatalf("add deletion: %v", err)
+	}
+	if _, err := os.Lstat(mappedWtFile(env)); !os.IsNotExist(err) {
+		t.Fatal("add deletion left the worktree copy behind")
+	}
+	if err := Get(env, []string{local}, false); err != nil {
+		t.Fatalf("get restore: %v", err)
+	}
+	if got := readFile(t, local); got != "V1\n" {
+		t.Fatalf("get did not resurrect the local file: %q", got)
+	}
+	if got := readFile(t, mappedWtFile(env)); got != "V1\n" {
+		t.Fatalf("get did not restore the worktree copy: %q", got)
+	}
+
+	// phase B: this time carry the deletion through commit + push
+	if err := os.Remove(local); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(env, []string{local}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := Commit(env, "drop mapped file"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Push(env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(gitRootMappedPath(env)); !os.IsNotExist(err) {
+		t.Fatal("deletion did not reach git-root")
+	}
+}
+
+func TestSyncKeepsSyncableOnTransientFailure(t *testing.T) {
+	env, remote, home := newTestEnv(t)
+	local := mappedLocal(t, home)
+	env.Cfg.Map.Items = []config.MapItem{
+		{Scope: config.ScopeMapRoot, Path: "dot/file.txt", LocalPath: local},
+	}
+	if err := Init(env); err != nil {
+		t.Fatal(err)
+	}
+	armGate(t, env)
+
+	// break the origin: fetch fails fast and permanently for git — but this
+	// is NOT divergence, so §3.2 says the gate survives
+	gitCmd(t, env.GitRoot, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "not-a-repo"))
+	writeFile(t, local, "V3\n")
+	err := Sync(env)
+	if err == nil {
+		t.Fatal("sync over a broken origin must fail")
+	}
+	if !HasSyncable(env) {
+		t.Fatal(".syncable removed on a non-divergence failure")
+	}
+
+	// repair and converge
+	gitCmd(t, env.GitRoot, "remote", "set-url", "origin", remote)
+	if err := Sync(env); err != nil {
+		t.Fatalf("sync after repair: %v", err)
+	}
+	if !HasSyncable(env) {
+		t.Fatal(".syncable lost after repaired sync")
+	}
+}
+
+func TestPullForceAdoptsRemoteBaseline(t *testing.T) {
+	env, remote, local, _ := setupMapped(t, "")
+	armGate(t, env)
+
+	// stale local history directly on git-root (as if another tool had
+	// committed there outside the map flow)
+	writeFile(t, filepath.Join(env.GitRoot, "stray.txt"), "zombie\n")
+	gitCmd(t, env.GitRoot, "add", "-A")
+	gitCmd(t, env.GitRoot, "commit", "-m", "stray local commit")
+
+	// meanwhile the remote moved via a peer
+	peer := peerClone(t, remote)
+	writeFile(t, filepath.Join(peer, "tm", "dot", "file.txt"), "Y-remote\n")
+	gitCmd(t, peer, "add", "-A")
+	gitCmd(t, peer, "commit", "-m", "y change")
+	gitCmd(t, peer, "push")
+
+	if err := Pull(env, true); err != nil {
+		t.Fatalf("pull --force: %v", err)
+	}
+	// git-root aligned to the remote baseline; the stray commit left the tip
+	if _, err := os.Lstat(filepath.Join(env.GitRoot, "stray.txt")); err == nil {
+		t.Fatal("stray file survived force alignment")
+	}
+	if got := readFile(t, gitRootMappedPath(env)); got != "Y-remote\n" {
+		t.Fatalf("force did not adopt remote baseline: %q", got)
+	}
+	// the real file was untouched by pull --force
+	if got := readFile(t, local); got != "V1\n" {
+		t.Fatalf("pull --force touched the real file: %q", got)
+	}
+	// the rewound machine tip stays reachable through the backup ref
+	if out := gitCmd(t, env.GitRoot, "rev-parse", "--verify", BackupRef(env.MapRoot)); out == "" {
+		t.Fatal("backup ref missing after force pull")
+	}
+
+	// choose local content again and converge everything
+	writeFile(t, local, "Z-final\n")
+	if err := Add(env, []string{local}, false); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := Commit(env, "resolve map divergence"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Push(env); err != nil {
+		t.Fatalf("push after force recovery: %v", err)
+	}
+	if got := readFile(t, gitRootMappedPath(env)); got != "Z-final\n" {
+		t.Fatalf("final convergence failed: %q", got)
+	}
+}
+
+func TestStatusRendersStatesAndHints(t *testing.T) {
+	env, _, _, _ := setupMapped(t, "")
+
+	out, err := Status(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"MANUAL_REQUIRED", "gnm add", "gnm push"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status missing %q:\n%s", want, out)
+		}
+	}
+	armGate(t, env)
+	out, err = Status(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "SYNCABLE") {
+		t.Fatalf("status missing SYNCABLE:\n%s", out)
+	}
+}
+
+func TestMappingConfigChangeDisarmsGate(t *testing.T) {
+	env, _, _, home := setupMapped(t, "")
+
+	extra := filepath.Join(home, "extra.sh")
+	writeFile(t, extra, "#!/bin/sh\necho hi\n")
+
+	// arm first WITHOUT the extra mapping so the later add is a pure
+	// mapping change on top of an armed gate
+	armGate(t, env)
+
+	if err := AddItem(env.ConfigPath, env.Cfg, config.ScopeGitRoot, "common/extra.sh", extra, env); err != nil {
+		t.Fatalf("AddItem initialized: %v", err)
+	}
+	if HasSyncable(env) {
+		t.Fatal(".syncable survived a mapping change (spec §4.5)")
+	}
+	// the new mapping was applied immediately: worktree holds the content
+	if got := readFile(t, filepath.Join(env.Worktree, "common", "extra.sh")); !strings.Contains(got, "echo hi") {
+		t.Fatalf("mapping not applied to worktree: %q", got)
+	}
+
+	// remove-all clears every definition, unmaps the machine namespace and
+	// disarms the gate again
+	if err := RemoveItems(env.ConfigPath, env.Cfg, nil, true, env); err != nil {
+		t.Fatalf("RemoveItems all: %v", err)
+	}
+	if len(env.Cfg.Map.Items) != 0 {
+		t.Fatalf("items not cleared: %d", len(env.Cfg.Map.Items))
+	}
+	if HasSyncable(env) {
+		t.Fatal(".syncable survived remove-all")
+	}
+	if _, err := os.Lstat(mappedWtFile(env)); !os.IsNotExist(err) {
+		t.Fatal("map-root scoped content survived remove-all")
+	}
+	if got := readFile(t, filepath.Join(env.Worktree, "common", "extra.sh")); !strings.Contains(got, "echo hi") {
+		t.Fatal("git-root scoped content must survive remove-all")
+	}
+}
+
+func TestLinkModeLifecycleWhenSupported(t *testing.T) {
+	probe := filepath.Join(t.TempDir(), "probe-link")
+	if err := os.Symlink(probe, probe+".lnk"); err != nil {
+		t.Skip("symlinks unavailable on this platform/account")
+	}
+	os.Remove(probe + ".lnk")
+
+	env, _, local, _ := setupMapped(t, "link")
+
+	// init replaced the local path with a symlink onto the worktree file
+	fi, err := os.Lstat(local)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("local path not converted to symlink: %v", err)
+	}
+	// edits through the link are instantly visible in the worktree
+	writeFile(t, local, "L2\n")
+	if got := readFile(t, mappedWtFile(env)); got != "L2\n" {
+		t.Fatalf("link does not expose worktree content: %q", got)
+	}
+	armGate(t, env)
+
+	// removing the mapping materializes a real file back (§4.5)
+	if err := RemoveItems(env.ConfigPath, env.Cfg, []string{local}, false, env); err != nil {
+		t.Fatalf("remove mapping: %v", err)
+	}
+	fi, err = os.Lstat(local)
+	if err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("unmap did not materialize a real file: %v", err)
+	}
+	if got := readFile(t, local); got != "L2\n" {
+		t.Fatalf("materialized file lost content: %q", got)
+	}
+}
+
+func TestSnapshotSaveLoadRoundtrip(t *testing.T) {
+	env, _, _, _ := setupMapped(t, "")
+
+	snapPath := filepath.Join(env.Worktree, ".gns", "map", "tm.toml")
+	if _, err := os.Stat(snapPath); err != nil {
+		t.Fatalf("init snapshot missing: %v", err)
+	}
+
+	// publish the snapshot to git-root the way users do: add -A picks up
+	// .gns/ together with mapped content (spec §6.5)
+	armGate(t, env)
+
+	fresh := filepath.Join(t.TempDir(), "fresh.toml")
+	if err := os.WriteFile(fresh, []byte("# fresh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	freshCfg := config.Defaults()
+	freshCfg.Map.GitRoot = env.GitRoot
+	freshCfg.Map.MapRoot = "" // no map-root yet: the argument selects the snapshot
+	if err := LoadSnapshot(fresh, freshCfg, "tm", nil); err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if freshCfg.Map.MapRoot != "tm" {
+		t.Fatalf("snapshot map_root not imported: %q", freshCfg.Map.MapRoot)
+	}
+	if len(freshCfg.Map.Items) != 1 || freshCfg.Map.Items[0].Path != "dot/file.txt" {
+		t.Fatalf("snapshot items not imported: %+v", freshCfg.Map.Items)
+	}
+}
