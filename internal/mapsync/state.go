@@ -175,11 +175,27 @@ func IsInitialized(env *Env) (initd bool, brokenErr error) {
 		return false, fmt.Errorf("inspect worktree %s: %w", env.Worktree, err)
 	}
 	commonAbs := NormalizeLocal(common)
-	if !strings.HasPrefix(LocalKey(commonAbs), LocalKey(env.GitRoot)+"/") &&
-		LocalKey(commonAbs) != LocalKey(env.GitRoot) {
+	// Ownership must be compared on physical paths: git resolves symlinks
+	// when reporting the common dir, so a symlinked TMPDIR on macOS
+	// (/var → /private/var) would otherwise false-negative here. See
+	// canonicalDir (ownership) vs NormalizeLocal (link identity).
+	rr := canonicalDir(env.GitRoot)
+	if !strings.HasPrefix(LocalKey(commonAbs), LocalKey(rr)+"/") &&
+		LocalKey(commonAbs) != LocalKey(rr) {
 		return false, fmt.Errorf("%w: %s belongs to %s", ErrWorktreeBroken, env.Worktree, commonAbs)
 	}
 	return true, nil
+}
+
+// canonicalDir resolves symlinks for path-ownership comparisons. Unlike
+// NormalizeLocal — which deliberately keeps the link identity of mapped
+// files — ownership checks must compare physical paths, or macOS /var →
+// /private/var aliasing (and similar) would false-negative.
+func canonicalDir(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	return filepath.Clean(p)
 }
 
 func ensureStateDir(env *Env) error { return os.MkdirAll(env.State, 0o755) }

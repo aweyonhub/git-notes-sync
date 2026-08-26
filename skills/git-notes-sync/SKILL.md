@@ -47,11 +47,12 @@ npm install -g --install-links=true --foreground-scripts --allow-scripts=git-not
 ### 手动构建（需要 Go 1.22+）
 
 ```bash
-cd E:\note-sync\glm
-go build -o gns.exe ./cmd/gns        # Windows
-go build -o gns ./cmd/gns            # Linux/macOS
+cd <项目目录>
+go build -o gns ./cmd/gns          # 本机二进制（Windows 得 gns.exe，Linux/macOS 得 gns）
 # 需要 gnm 时，复制/硬链接同一二进制为 gnm 即可
-make cross                           # 交叉编译 6 平台到 dist/
+make cross                           # 交叉编译 6 平台；make 需类 Unix shell：
+#                                     Linux/macOS 原生；Windows 在 WSL 或 Git Bash/MSYS2
+#                                     中运行；或直接用 go build（版本号取源码默认）
 ```
 
 ### 前置要求
@@ -156,7 +157,7 @@ gns uninstall                  # 卸载
 
 | 平台 | 机制 |
 |------|------|
-| macOS | launchd LaunchAgent（开机自启，KeepAlive） |
+| macOS | launchd LaunchAgent：默认 `StartInterval` 定时触发；`--daemon` 用 `KeepAlive` 常驻 |
 | Linux | systemd user units（默认）/ crontab（--cron） |
 | Windows | 任务计划程序（schtasks，无需管理员，每分钟触发） |
 

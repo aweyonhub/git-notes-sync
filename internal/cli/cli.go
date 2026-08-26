@@ -199,7 +199,7 @@ func logStamp() string {
 }
 
 var commonValueFlags = map[string]bool{
-	"c": true, "p": true, "repo": true, "message": true, "name": true,
+	"c": true, "p": true, "repo": true, "m": true, "message": true, "name": true,
 }
 
 func cmdSync(args []string) error {
@@ -296,6 +296,7 @@ func cmdCommit(args []string, forcedMode string) error {
 	fs := flag.NewFlagSet("commit", flag.ContinueOnError)
 	var cfgPath, repo, message string
 	commonFlags(fs, &cfgPath, &repo)
+	fs.StringVar(&message, "m", "", "custom commit message (short form)")
 	fs.StringVar(&message, "message", "", "custom commit message")
 	if err := fs.Parse(normalizeArgs(args, commonValueFlags)); err != nil {
 		return err
