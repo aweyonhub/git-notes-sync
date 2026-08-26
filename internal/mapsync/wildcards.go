@@ -48,6 +48,7 @@ func globRegexp(pattern string) (*regexp.Regexp, error) {
 // the requested git side; a pattern matching nothing is an error.
 func selectNodes(env *Env, args []string, all bool, side gitSide) (map[int][]string, error) {
 	out := map[int][]string{}
+	cached := map[int][]string{}
 	add := func(idx int, rel string) {
 		for _, r := range out[idx] {
 			if r == rel {
@@ -65,41 +66,49 @@ func selectNodes(env *Env, args []string, all bool, side gitSide) (map[int][]str
 
 	for _, arg := range args {
 		norm := NormalizeLocal(arg)
-		idx, err := findOwningItem(env.Cfg.Map.Items, norm)
-		if err != nil {
-			return nil, fmt.Errorf("map add/get: %v", err)
-		}
-		item := env.Cfg.Map.Items[idx]
-		rootAbs := NormalizeLocal(item.LocalPath)
-
-		if !strings.Contains(filepath.Base(filepath.ToSlash(norm)), "*") {
+		if !strings.Contains(filepath.ToSlash(norm), "*") {
+			idx, err := findOwningItem(env.Cfg.Map.Items, norm)
+			if err != nil {
+				return nil, fmt.Errorf("map add/get: %v", err)
+			}
+			rootAbs := NormalizeLocal(env.Cfg.Map.Items[idx].LocalPath)
 			add(idx, relUnder(LocalKey(rootAbs), LocalKey(norm)))
 			continue
 		}
 
-		cands, err := unionCandidates(env, item, side)
-		if err != nil {
-			return nil, err
-		}
 		re, err := globRegexp(norm)
 		if err != nil {
 			return nil, fmt.Errorf("pattern %q: %v", arg, err)
 		}
-		var matched []string
-		for _, candRel := range cands {
-			full := filepath.ToSlash(rootAbs)
-			if candRel != "" {
-				full += "/" + candRel
+		matchedAny := false
+		for idx, item := range env.Cfg.Map.Items {
+			rootAbs := NormalizeLocal(item.LocalPath)
+			cands, ok := cached[idx]
+			if !ok {
+				cands, err = unionCandidates(env, item, side)
+				if err != nil {
+					return nil, err
+				}
+				cands = append(cands, "") // allow a pattern to select a mapping root
+				cached[idx] = cands
 			}
-			if re.MatchString(full) {
-				matched = append(matched, candRel)
+			var matched []string
+			for _, candRel := range cands {
+				full := filepath.ToSlash(rootAbs)
+				if candRel != "" {
+					full += "/" + candRel
+				}
+				if re.MatchString(full) {
+					matched = append(matched, candRel)
+				}
+			}
+			for _, rel := range collapseDescendants(matched) {
+				add(idx, rel)
+				matchedAny = true
 			}
 		}
-		if len(matched) == 0 {
-			return nil, fmt.Errorf("pattern %q matched nothing in mapping %s", arg, item.LocalPath)
-		}
-		for _, rel := range collapseDescendants(matched) {
-			add(idx, rel)
+		if !matchedAny {
+			return nil, fmt.Errorf("pattern %q matched nothing", arg)
 		}
 	}
 	return out, nil

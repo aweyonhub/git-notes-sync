@@ -11,7 +11,7 @@ Go 实现，调用系统 Git，不重新实现 Git。详见 [doc/git-notes-sync.
 
 ### npm（推荐，免编译）
 
-平台分包：主包无任何 install 脚本（不触发 allow-scripts），原生二进制随平台子包 `@aweyonhub/git-notes-sync-<os>-<arch>` 自动安装（npm 按 os/cpu 过滤 optionalDependencies）。提供 `gns`（主命令）/ `notes-sync`（别名）。
+平台分包：主包无任何 install 脚本（不触发 allow-scripts），原生二进制随平台子包 `@aweyonhub/git-notes-sync-<os>-<arch>` 自动安装（npm 按 os/cpu 过滤 optionalDependencies）。提供 `gns`（主命令）、`gnm`（map 短命令）和 `notes-sync`（别名）。
 
 ```bash
 # 方式一：npm registry（子包发布后可用，零 flag）

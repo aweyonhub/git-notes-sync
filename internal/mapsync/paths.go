@@ -58,6 +58,11 @@ func SnapshotRel(mapRoot string) string { return ".gns/map/" + mapRoot + ".toml"
 // (spec §9.5: old HEAD must stay reachable).
 func BackupRef(mapRoot string) string { return "refs/gns/map/" + mapRoot + "-backup" }
 
+// GitRootBackupRef keeps the integration branch reachable before force pull.
+func GitRootBackupRef(mapRoot string) string {
+	return "refs/gns/map/" + mapRoot + "-git-root-backup"
+}
+
 var mapRootRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // ValidMapRoot enforces path- and Git-ref-safe names: letters/digits/-/_/.,
@@ -65,10 +70,20 @@ var mapRootRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 func ValidMapRoot(name string) error {
 	if !mapRootRe.MatchString(name) ||
 		strings.Contains(name, "..") ||
-		strings.HasSuffix(name, ".lock") {
-		return fmt.Errorf("invalid map-root %q (letters/digits/._- only, start alphanumeric, no %q)", name, "..")
+		strings.HasSuffix(name, ".") ||
+		strings.HasSuffix(strings.ToLower(name), ".lock") ||
+		windowsReservedName(name) {
+		return fmt.Errorf("invalid map-root %q: use a portable letters/digits/._- name", name)
 	}
 	return nil
+}
+
+func windowsReservedName(name string) bool {
+	base := strings.ToUpper(strings.SplitN(name, ".", 2)[0])
+	if base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" {
+		return true
+	}
+	return len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9'
 }
 
 // expandHome resolves a leading ~ without depending on $HOME semantics that

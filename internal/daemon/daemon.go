@@ -43,7 +43,7 @@ func Run(globalPath string, once bool) error {
 		}
 
 		repos := cfg.Repos.All()
-		if len(repos) == 0 {
+		if len(repos) == 0 && !cfg.Map.Sync {
 			if wd, err := os.Getwd(); err == nil {
 				repos = []config.Repo{{Path: wd}}
 			}

@@ -48,6 +48,10 @@ func Pull(env *Env, force bool) error {
 		// keep the pre-reset machine branch recoverable (spec §9.5)
 		g.UpdateRefBestEffort(BackupRef(env.MapRoot), oldWt)
 	}
+	oldRoot := g.Head()
+	if oldRoot != "" {
+		g.UpdateRefBestEffort(GitRootBackupRef(env.MapRoot), oldRoot)
+	}
 
 	if force {
 		remote, _, ok := g.Upstream()
@@ -72,6 +76,8 @@ func Pull(env *Env, force bool) error {
 		diverged, err := pullFFOnly(g, env.Cfg.RetryAttempts)
 		if err != nil {
 			if diverged {
+				RemoveSyncable(env)
+				WriteBlocked(env, &BlockedState{Reason: "divergence"})
 				return errors.New("map: git-root diverged from upstream; use `gnm pull --force`")
 			}
 			return fmt.Errorf("map: git-root pull: %w", err)
@@ -82,6 +88,7 @@ func Pull(env *Env, force bool) error {
 	if base == "" {
 		return errors.New("map: git-root has no commits")
 	}
+	RemoveSyncable(env)
 	// mixed reset moves HEAD+index only; working files and real files stay
 	if err := w.ResetMixed(base); err != nil {
 		return fmt.Errorf("map: worktree reset --mixed to %s: %w", short(base), err)

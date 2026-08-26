@@ -57,7 +57,10 @@ func mapLogf(f string, a ...any) {
 func loadUserConfig(cfgPath string) (*config.Config, string, error) {
 	p := resolveCfgPath(cfgPath)
 	if _, err := os.Stat(p); err != nil {
-		return config.Defaults(), p, nil
+		if os.IsNotExist(err) {
+			return config.Defaults(), p, nil
+		}
+		return nil, p, err
 	}
 	cfg, err := config.Load(p, "")
 	if err != nil {
@@ -146,7 +149,7 @@ func cmdMap(args []string) error {
 		if err := fs.Parse(normalizeArgs(rest, commonValueFlags)); err != nil {
 			return err
 		}
-		if msg != "" && len(fs.Args()) > 0 {
+		if len(fs.Args()) > 0 {
 			return errors.New("usage: gnm commit [-m <message>]")
 		}
 		env, err := loadMapEnv(cfgPath)
@@ -230,6 +233,9 @@ func cmdMapConfig(args []string) error {
 			key = "map_root"
 		}
 		cfgPath2 := resolveCfgPath(cfgPath)
+		if err := guardMapBaseChange(cfgPath2, key, args[0], false); err != nil {
+			return err
+		}
 		if err := config.SetKey(cfgPath2, "map", key, args[0]); err != nil {
 			return err
 		}
@@ -258,24 +264,33 @@ func cmdMapConfig(args []string) error {
 		if err != nil {
 			return err
 		}
-		env := initializedEnvOrNil(p, cfg)
+		env, err := initializedEnvOrNil(p, cfg)
+		if err != nil {
+			return err
+		}
 		return mapsync.AddItem(p, cfg, scope, scopeVal, args[0], env)
 
 	case "remove":
 		var cfgPath string
-		removeAll := hasBoolFlag(rest, "A") || hasBoolFlag(rest, "all")
-		args, err := parseKVArgs(rest, map[string]*string{"c": &cfgPath})
+		filtered, removeAll := stripMapRemoveAll(rest)
+		args, err := parseKVArgs(filtered, map[string]*string{"c": &cfgPath})
 		if err != nil {
 			return err
 		}
 		if !removeAll && len(args) == 0 {
 			return errors.New("usage: gnm config remove <local-path...> | -A")
 		}
+		if removeAll && len(args) != 0 {
+			return errors.New("usage: gnm config remove <local-path...> | -A")
+		}
 		cfg, p, err := loadUserConfig(cfgPath)
 		if err != nil {
 			return err
 		}
-		env := initializedEnvOrNil(p, cfg)
+		env, err := initializedEnvOrNil(p, cfg)
+		if err != nil {
+			return err
+		}
 		return mapsync.RemoveItems(p, cfg, args, removeAll, env)
 
 	case "list":
@@ -333,12 +348,11 @@ func cmdMapConfig(args []string) error {
 		// effective map-root: CLI arg wins over the configured one (§4.6);
 		// the snapshot content is always the current user [map] section
 		if len(args) == 1 && args[0] != env.MapRoot {
+			if err := mapsync.ValidMapRoot(args[0]); err != nil {
+				return err
+			}
 			snapEnv := *env
 			snapEnv.MapRoot = args[0]
-			snapEnv.Worktree = mapsync.WorktreeDir(args[0])
-			if !mapsync.IsInitialized(&snapEnv) {
-				return fmt.Errorf("worktree for %q not initialized", args[0])
-			}
 			return mapsync.SaveSnapshot(&snapEnv)
 		}
 		if !mapsync.IsInitialized(env) {
@@ -388,12 +402,18 @@ func safeCfg(cfg *config.Config) *config.Config {
 
 // initializedEnvOrNil resolves env only when the machine worktree exists,
 // mirroring spec §4.1: pre-init edits touch config alone.
-func initializedEnvOrNil(cfgPath string, cfg *config.Config) *mapsync.Env {
+func initializedEnvOrNil(cfgPath string, cfg *config.Config) (*mapsync.Env, error) {
 	env, err := mapsync.ResolveEnv(cfg, cfgPath, mapLogf)
-	if err != nil || !mapsync.IsInitialized(env) {
-		return nil
+	if err != nil {
+		if cfg.Map.MapRoot == "" || cfg.Map.GitRoot == "" {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return env
+	if !mapsync.IsInitialized(env) {
+		return nil, nil
+	}
+	return env, nil
 }
 
 // parseKVArgsMulti is parseKVArgs plus tracking which value-flag was used
@@ -412,7 +432,12 @@ func parseKVArgsMulti(args []string, flags map[string]*string, used *string) ([]
 				return nil, fmt.Errorf("flag %s requires a value", a)
 			}
 			*dst = args[i+1]
-			*used = key
+			if (key == "a" || key == "A") && *used != "" && *used != key {
+				return nil, errors.New("-a and -A are mutually exclusive")
+			}
+			if key == "a" || key == "A" {
+				*used = key
+			}
 			i++
 			continue
 		}
@@ -428,12 +453,15 @@ func trimDashes(a string) string {
 	return a
 }
 
-// hasBoolFlag reports whether a boolean-style flag appears anywhere.
-func hasBoolFlag(args []string, name string) bool {
-	for _, a := range args {
-		if trimDashes(a) == name {
-			return true
+func stripMapRemoveAll(args []string) ([]string, bool) {
+	filtered := make([]string, 0, len(args))
+	all := false
+	for _, arg := range args {
+		if arg == "-A" || arg == "--all" {
+			all = true
+			continue
 		}
+		filtered = append(filtered, arg)
 	}
-	return false
+	return filtered, all
 }

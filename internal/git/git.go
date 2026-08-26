@@ -426,6 +426,24 @@ func (r *Runner) HasStaged() (bool, error) {
 	return false, cmdErr([]string{"diff", "--cached", "--quiet"}, "", err)
 }
 
+// PathsChanged reports whether two commits differ under the selected paths.
+func (r *Runner) PathsChanged(from, to string, paths ...string) (bool, error) {
+	args := []string{"diff", "--quiet", from, to}
+	if len(paths) > 0 {
+		args = append(args, "--")
+		args = append(args, paths...)
+	}
+	_, _, err := r.run(args...)
+	if err == nil {
+		return false, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return true, nil
+	}
+	return false, cmdErr(args, "", err)
+}
+
 // MergeFFOnly fast-forwards to ref, refusing to create a merge commit.
 func (r *Runner) MergeFFOnly(ref string) error {
 	_, err := r.Out("merge", "--ff-only", ref)
@@ -450,6 +468,22 @@ func (r *Runner) ResetMixed(rev string) error {
 	return err
 }
 
+// ResetMerge moves HEAD while preserving unrelated working-tree changes.
+func (r *Runner) ResetMerge(rev string) error {
+	_, err := r.Out("reset", "--merge", rev)
+	return err
+}
+
+// ResetPaths restores selected index entries without touching working files.
+func (r *Runner) ResetPaths(rev string, paths ...string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"reset", "-q", rev, "--"}, paths...)
+	_, err := r.Out(args...)
+	return err
+}
+
 // UpdateRefBestEffort points ref at rev, ignoring failures (backup refs are
 // a safety net, not a requirement).
 func (r *Runner) UpdateRefBestEffort(ref, rev string) {
@@ -459,6 +493,16 @@ func (r *Runner) UpdateRefBestEffort(ref, rev string) {
 // WorktreeAdd creates a linked worktree at dir with a new branch based on base.
 func (r *Runner) WorktreeAdd(branch, dir, base string) error {
 	_, err := r.Out("worktree", "add", "-b", branch, dir, base)
+	return err
+}
+
+func (r *Runner) WorktreeRemove(dir string) error {
+	_, err := r.Out("worktree", "remove", "--force", dir)
+	return err
+}
+
+func (r *Runner) DeleteBranch(branch string) error {
+	_, err := r.Out("branch", "-D", branch)
 	return err
 }
 

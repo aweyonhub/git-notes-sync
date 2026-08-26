@@ -3,6 +3,7 @@
 package mapsync
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -83,6 +84,26 @@ func TestRepoPathOf(t *testing.T) {
 	got, err = RepoPathOf(gr, "winTx")
 	if err != nil || got != "common/x" {
 		t.Fatalf("RepoPathOf git-root = %q, %v", got, err)
+	}
+}
+
+func TestMapPathSafety(t *testing.T) {
+	for _, path := range []string{".git/config", ".gns/map/other.toml", "CON/file", `C:\\absolute`} {
+		item := config.MapItem{Scope: config.ScopeGitRoot, Path: path, LocalPath: "~/.x"}
+		if _, err := RepoPathOf(item, "tm"); err == nil {
+			t.Fatalf("unsafe repo path accepted: %s", path)
+		}
+	}
+
+	t.Setenv("GNS_APP_DATA", t.TempDir())
+	cfg := config.Defaults()
+	cfg.Map.MapRoot = "tm"
+	cfg.Map.Items = []config.MapItem{{Scope: config.ScopeMapRoot, Path: "x", LocalPath: "~/.x"}}
+	if err := os.MkdirAll(filepath.Join(WorktreeDir("tm"), ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireMutableBase(cfg); err == nil {
+		t.Fatal("initialized base configuration was mutable")
 	}
 }
 
@@ -187,6 +208,72 @@ func TestSyncTreePreservesExecBit(t *testing.T) {
 	if err != nil || fi.Mode()&0o111 == 0 {
 		t.Fatal("executable bit lost in copy")
 	}
+}
+
+func TestTrackedCopyBlocksConcurrentLocalChange(t *testing.T) {
+	tmp := t.TempDir()
+	local := filepath.Join(tmp, "local")
+	worktree := filepath.Join(tmp, "worktree")
+	writeF(t, filepath.Join(local, "a.txt"), "local")
+
+	baseline, err := syncTreeTracked(local, worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeF(t, filepath.Join(local, "a.txt"), "edited while merging")
+	writeF(t, filepath.Join(worktree, "a.txt"), "remote")
+
+	err = syncTreeGuarded(worktree, local, baseline)
+	var changed *ConcurrentChangeError
+	if !errors.As(err, &changed) {
+		t.Fatalf("expected ConcurrentChangeError, got %v", err)
+	}
+	if got := string(mustRead(t, filepath.Join(local, "a.txt"))); got != "edited while merging" {
+		t.Fatalf("concurrent local edit overwritten: %q", got)
+	}
+}
+
+func TestEnsureSymlinkRefusesExistingPath(t *testing.T) {
+	tmp := t.TempDir()
+	local := filepath.Join(tmp, "local.txt")
+	target := filepath.Join(tmp, "target.txt")
+	writeF(t, local, "keep")
+	writeF(t, target, "target")
+	if err := EnsureSymlink(local, target); err == nil {
+		t.Fatal("EnsureSymlink replaced an unmanaged file")
+	}
+	if got := string(mustRead(t, local)); got != "keep" {
+		t.Fatalf("existing file changed: %q", got)
+	}
+}
+
+func TestWildcardCanSelectMappingRoots(t *testing.T) {
+	tmp := t.TempDir()
+	parent := filepath.Join(tmp, "pi")
+	items := []config.MapItem{
+		{Scope: config.ScopeMapRoot, Path: "skills", LocalPath: filepath.Join(parent, "skills")},
+		{Scope: config.ScopeMapRoot, Path: "agents", LocalPath: filepath.Join(parent, "agents")},
+	}
+	for _, item := range items {
+		writeF(t, filepath.Join(item.LocalPath, "x.txt"), "x")
+	}
+	env := &Env{Cfg: &config.Config{Map: config.Map{Items: items}}, MapRoot: "tm", Worktree: filepath.Join(tmp, "wt")}
+	nodes, err := selectNodes(env, []string{filepath.Join(parent, "*")}, false, sideWorktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 || len(nodes[0]) != 1 || nodes[0][0] != "" || len(nodes[1]) != 1 || nodes[1][0] != "" {
+		t.Fatalf("root wildcard selection = %#v", nodes)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func TestRemoveItemBlocksWhereKeepsOtherContent(t *testing.T) {

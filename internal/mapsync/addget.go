@@ -30,7 +30,7 @@ func Add(env *Env, args []string, all bool) error {
 			return fmt.Errorf("map: %w", err)
 		}
 		defer unlock()
-		if err := convergeIntoWorktree(env); err != nil {
+		if _, err := convergeIntoWorktree(env); err != nil {
 			return classifySpecial(env, err)
 		}
 		if err := env.wtRunner().AddAll(); err != nil {
@@ -142,7 +142,10 @@ func getNode(env *Env, idx int, rel string) error {
 		return err
 	}
 	if !inHead {
-		// HEAD lacks this node: confirm deletion on both sides (§6.4)
+		// Reset the index first. get adopts HEAD and must not stage a deletion.
+		if err := env.wtRunner().ResetPaths("HEAD", repoRel); err != nil {
+			return err
+		}
 		for _, p := range []string{wtAbs, env.localJoin(it, rel)} {
 			if k := kindOf(p); k == kOther {
 				return &SpecialFileError{p}
@@ -151,10 +154,17 @@ func getNode(env *Env, idx int, rel string) error {
 				return err
 			}
 		}
-		return env.wtRunner().Add(repoRel)
+		return nil
 	}
 
-	// checkout writes index + worktree in one step
+	// Remove the selected worktree node first so checkout also drops untracked
+	// children that are absent from HEAD.
+	if kindOf(wtAbs) == kOther {
+		return &SpecialFileError{wtAbs}
+	}
+	if err := os.RemoveAll(wtAbs); err != nil {
+		return err
+	}
 	if out, cerr := env.wtRunner().Out("checkout", "HEAD", "--", repoRel); cerr != nil {
 		_ = out
 		return fmt.Errorf("checkout %s: %w", repoRel, cerr)
@@ -173,6 +183,14 @@ func getNode(env *Env, idx int, rel string) error {
 		return &SpecialFileError{wtAbs}
 	}
 	if env.LinkMode() {
+		if kindOf(localAbs) == kOther {
+			return &SpecialFileError{localAbs}
+		}
+		if !linkPointsTo(localAbs, wtAbs) {
+			if err := os.RemoveAll(localAbs); err != nil {
+				return err
+			}
+		}
 		return EnsureSymlink(localAbs, wtAbs)
 	}
 	if err := ensureParent(localAbs); err != nil {

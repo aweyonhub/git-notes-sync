@@ -614,6 +614,11 @@ func cmdConfigSet(rest []string) error {
 		return configKeyError(dotted)
 	}
 	p := resolveCfgPath(cfgPath)
+	if f.Section == "map" && (f.Key == "git_root" || f.Key == "map_root" || f.Key == "mode") {
+		if err := guardMapBaseChange(p, f.Key, value, false); err != nil {
+			return err
+		}
+	}
 	if err := config.SetKey(p, f.Section, f.Key, value); err != nil {
 		return err
 	}
@@ -636,6 +641,11 @@ func cmdConfigUnset(rest []string) error {
 		return configKeyError(dotted)
 	}
 	p := resolveCfgPath(cfgPath)
+	if f.Section == "map" && (f.Key == "git_root" || f.Key == "map_root" || f.Key == "mode") {
+		if err := guardMapBaseChange(p, f.Key, "", true); err != nil {
+			return err
+		}
+	}
 	removed, err := config.UnsetKey(p, f.Section, f.Key)
 	if err != nil {
 		return err
@@ -646,6 +656,26 @@ func cmdConfigUnset(rest []string) error {
 		fmt.Printf("%s was not set (using default)\n", dotted)
 	}
 	return nil
+}
+
+func guardMapBaseChange(path, key, value string, unset bool) error {
+	cfg, err := loadEffective(path)
+	if err != nil {
+		return err
+	}
+	current, _ := config.FieldValue(cfg, "map", key)
+	if !unset && current == value {
+		return nil
+	}
+	if key == "map_root" && !unset {
+		if err := mapsync.ValidMapRoot(value); err != nil {
+			return err
+		}
+	}
+	if key == "mode" && !unset && value != "auto" && value != "link" && value != "copy" {
+		return fmt.Errorf("map.mode must be auto, link, or copy")
+	}
+	return mapsync.RequireMutableBase(cfg)
 }
 
 // configKeyError reports an unknown key, hinting at `config list`.

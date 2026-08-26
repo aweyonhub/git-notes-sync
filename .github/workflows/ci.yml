@@ -92,6 +92,7 @@ jobs:
           npm install -g /tmp/pkgs/meta/*git-notes-sync-*.tgz
           gns --version
           gns help | head -3
+          gnm help | head -3
           npm ls -g --depth=0 | grep git-notes-sync
 
   build:

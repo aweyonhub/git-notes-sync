@@ -36,7 +36,16 @@ func ResolveEnv(cfg *config.Config, cfgPath string, logf func(string, ...any)) (
 	if cfg.Map.GitRoot == "" {
 		return nil, errors.New("map: map.git_root is not configured (run `gnm config git-root <path>`)")
 	}
+	if cfg.Map.Mode != "" && cfg.Map.Mode != "auto" && cfg.Map.Mode != "link" && cfg.Map.Mode != "copy" {
+		return nil, fmt.Errorf("map: invalid mode %q", cfg.Map.Mode)
+	}
 	gitRoot := NormalizeLocal(cfg.Map.GitRoot)
+	if errs := ValidateItems(cfg.Map.Items, mr); len(errs) > 0 {
+		return nil, fmt.Errorf("map: invalid mappings: %v", errs[0])
+	}
+	if errs := ValidatePlacement(cfg.Map.Items, gitRoot, mr); len(errs) > 0 {
+		return nil, fmt.Errorf("map: invalid mapping placement: %v", errs[0])
+	}
 	mode := ResolveMode(cfg.Map.Mode)
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -121,9 +130,20 @@ func (e *Env) headRels(item config.MapItem) ([]string, error) {
 		return nil, err
 	}
 	prefix := rp + "/"
-	out := make([]string, 0, len(names))
+	set := make(map[string]bool, len(names))
 	for _, n := range names {
-		out = append(out, strings.TrimPrefix(n, prefix))
+		rel := strings.TrimPrefix(n, prefix)
+		if rel == n {
+			continue
+		}
+		set[rel] = true
+		for parent := filepath.ToSlash(filepath.Dir(filepath.FromSlash(rel))); parent != "." && parent != ""; parent = filepath.ToSlash(filepath.Dir(filepath.FromSlash(parent))) {
+			set[parent] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for rel := range set {
+		out = append(out, rel)
 	}
 	return out, nil
 }
@@ -131,12 +151,10 @@ func (e *Env) headRels(item config.MapItem) ([]string, error) {
 // IsInitialized reports whether the machine worktree exists with its branch
 // (both-or-neither; a lone side is partial-init debris reported by Init).
 func IsInitialized(env *Env) bool {
-	g := env.gitRunner()
-	if !g.BranchExists(BranchName(env.MapRoot)) {
+	if _, err := os.Stat(filepath.Join(env.Worktree, ".git")); err != nil {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(env.Worktree, ".git"))
-	return err == nil
+	return env.wtRunner().CurrentBranch() == BranchName(env.MapRoot)
 }
 
 func ensureStateDir(env *Env) error { return os.MkdirAll(env.State, 0o755) }

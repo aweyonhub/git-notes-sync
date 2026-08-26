@@ -38,6 +38,14 @@ func LocalKey(p string) string {
 	return s
 }
 
+func repoKey(p string) string {
+	p = filepath.ToSlash(filepath.Clean(p))
+	if IsWindows() {
+		return strings.ToLower(p)
+	}
+	return p
+}
+
 // RepoPathOf resolves an item's repo-relative path for a map root:
 // map-root scope prefixes the namespace; git-root scope uses the raw path.
 func RepoPathOf(item config.MapItem, mapRoot string) (string, error) {
@@ -49,12 +57,23 @@ func RepoPathOf(item config.MapItem, mapRoot string) (string, error) {
 	if clean == "" || clean == "." {
 		return "", fmt.Errorf("empty repo path")
 	}
-	if filepath.IsAbs(item.Path) || strings.HasPrefix(clean, "/") ||
+	if filepath.IsAbs(item.Path) || filepath.VolumeName(item.Path) != "" || strings.HasPrefix(clean, "/") ||
 		clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
 		return "", fmt.Errorf("repo path must be relative without %q: %q", "..", item.Path)
 	}
+	for _, part := range strings.Split(clean, "/") {
+		if strings.EqualFold(part, ".git") {
+			return "", fmt.Errorf("repo path must not contain .git: %q", item.Path)
+		}
+		if strings.ContainsAny(part, `<>:"|?*`) || strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") || windowsReservedName(part) {
+			return "", fmt.Errorf("repo path is not portable to Windows: %q", part)
+		}
+	}
 	if item.Scope == config.ScopeMapRoot {
 		clean = mapRoot + "/" + clean
+	}
+	if clean == ".gns/map" || strings.HasPrefix(clean, ".gns/map/") {
+		return "", fmt.Errorf("repo path overlaps reserved .gns/map: %q", item.Path)
 	}
 	return clean, nil
 }
@@ -67,6 +86,10 @@ func ValidateItems(items []config.MapItem, mapRoot string) []error {
 	repoOwner := map[string]string{} // repoKey -> localKey that claimed it
 
 	for i, it := range items {
+		if strings.TrimSpace(it.LocalPath) == "" {
+			errs = append(errs, fmt.Errorf("item #%d: empty local path", i+1))
+			continue
+		}
 		rp, err := RepoPathOf(it, mapRoot)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("item #%d (%s): %v", i+1, it.LocalPath, err))
@@ -74,17 +97,41 @@ func ValidateItems(items []config.MapItem, mapRoot string) []error {
 		}
 		lk := LocalKey(NormalizeLocal(it.LocalPath))
 		localKeys = append(localKeys, lk)
-		repoKeys = append(repoKeys, rp)
-		if owner, ok := repoOwner[rp]; ok && owner == lk {
+		rk := repoKey(rp)
+		repoKeys = append(repoKeys, rk)
+		if owner, ok := repoOwner[rk]; ok && owner == lk {
 			errs = append(errs, fmt.Errorf("duplicate mapping (same local and repo path): %s ↔ %s", it.LocalPath, rp))
 		} else if owner != "" {
 			errs = append(errs, fmt.Errorf("duplicate repo path %s (also mapped from %s)", rp, owner))
 		} else {
-			repoOwner[rp] = lk
+			repoOwner[rk] = lk
 		}
 	}
 	errs = append(errs, containmentErrors(localKeys, "local")...)
 	errs = append(errs, containmentErrors(repoKeys, "repo")...)
+	return errs
+}
+
+// ValidatePlacement prevents a mapping from copying the repository or map
+// state into itself.
+func ValidatePlacement(items []config.MapItem, gitRoot, mapRoot string) []error {
+	var errs []error
+	for i, it := range items {
+		local := LocalKey(NormalizeLocal(it.LocalPath))
+		for _, target := range []struct{ name, path string }{
+			{"git-root", gitRoot},
+			{"map state", StateDir(mapRoot)},
+			{"worktree", WorktreeDir(mapRoot)},
+		} {
+			if strings.TrimSpace(target.path) == "" {
+				continue
+			}
+			other := LocalKey(NormalizeLocal(target.path))
+			if within(local, other) || within(other, local) {
+				errs = append(errs, fmt.Errorf("item #%d overlaps %s: %s", i+1, target.name, it.LocalPath))
+			}
+		}
+	}
 	return errs
 }
 

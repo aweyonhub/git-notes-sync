@@ -39,10 +39,11 @@ func Status(env *Env) (string, error) {
 	if gr := repoLine(g); gr != "" {
 		fmt.Fprintf(&b, "git-root:   %s\n", gr)
 	}
+	dirty := false
 	if init {
 		fmt.Fprintf(&b, "worktree:   %s (%s)\n", env.Worktree, BranchName(env.MapRoot))
-		if dirty, err := wtHasChanges(w); err == nil && dirty {
-			entries, _ := w.Status()
+		if entries, err := w.Status(); err == nil && len(entries) > 0 {
+			dirty = true
 			fmt.Fprintf(&b, "            dirty: %d change(s)\n", len(entries))
 		}
 	} else {
@@ -60,18 +61,31 @@ func Status(env *Env) (string, error) {
 	if len(env.Cfg.Map.Items) == 0 {
 		b.WriteString("  (none configured; `gnm config add -a <repo-path> <local-path>`)\n")
 	}
+	needsChoice := false
 	for _, it := range env.Cfg.Map.Items {
-		lk := kindOf(NormalizeLocal(it.LocalPath))
+		local := NormalizeLocal(it.LocalPath)
+		lk := kindOf(local)
 		wk := kMissing
+		wtPath := ""
 		if p, err := env.worktreePathOf(it); err == nil {
+			wtPath = p
 			wk = kindOf(p)
 		}
 		note := ""
+		wrongLink := false
+		if env.LinkMode() {
+			if linkPointsTo(local, wtPath) {
+				lk = wk
+			} else if lk == kSymlink {
+				wrongLink = true
+			}
+		}
 		switch {
 		case lk == kMissing && wk == kMissing:
 			note = "empty on both sides"
-		case lk != wk:
+		case wrongLink || lk != wk:
 			note = "NEEDS CHOICE"
+			needsChoice = true
 		}
 		scope := it.Scope
 		if scope == config.ScopeMapRoot {
@@ -82,7 +96,7 @@ func Status(env *Env) (string, error) {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(nextSteps(env, state, blocked))
+	b.WriteString(nextSteps(state, blocked, dirty, needsChoice))
 	return b.String(), nil
 }
 
@@ -103,7 +117,7 @@ func repoLine(g *git.Runner) string {
 }
 
 // nextSteps mirrors the suggestion table of spec §6.4.
-func nextSteps(env *Env, state string, blocked *BlockedState) string {
+func nextSteps(state string, blocked *BlockedState, dirty, needsChoice bool) string {
 	var s []string
 	switch {
 	case state == "NOT_INITIALIZED":
@@ -122,15 +136,17 @@ func nextSteps(env *Env, state string, blocked *BlockedState) string {
 			"      gnm add <path> 或 gnm get <path>",
 			"      gnm commit -m \"resolve map conflict\"",
 			"      gnm push")
-	case state == "MANUAL_REQUIRED" && blocked != nil && blocked.Reason == "mapping-root":
+	case state == "MANUAL_REQUIRED" && needsChoice:
 		s = append(s,
 			"Next: gnm add <path>    # keep the local version",
 			"   or gnm get <path>    # adopt the HEAD version",
 			"Then: gnm commit -m \"...\" ; gnm push")
-	case state == "MANUAL_REQUIRED":
+	case state == "MANUAL_REQUIRED" && dirty:
 		s = append(s,
 			"Next: gnm add <path> 或 gnm get <path>   # choose content",
 			"Then: gnm push                          # re-arm .syncable")
+	case state == "MANUAL_REQUIRED":
+		s = append(s, "Next: gnm push   # confirm state and arm .syncable")
 	default: // SYNCABLE
 		s = append(s, "Next: nothing required",
 			"Optional: gnm sync   # sync immediately")

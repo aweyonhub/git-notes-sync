@@ -101,27 +101,22 @@ func runChain(env *Env, auto bool) error {
 		return fmt.Errorf("map: mapping root needs manual choice; .syncable removed\n  %s", viol)
 	}
 
-	// step 4: converge local→worktree (sync mode) / require clean (push mode)
-	if auto {
-		if err := convergeIntoWorktree(env); err != nil {
-			return classifySpecial(env, err)
-		}
-		dirty, derr := wtHasChanges(w)
-		if derr != nil {
-			return derr
-		}
-		if dirty {
-			if err := commitWorktree(env, ""); err != nil {
-				return err
-			}
-		}
-	} else {
-		dirty, derr := wtHasChanges(w)
-		if derr != nil {
-			return derr
-		}
-		if dirty {
-			return errors.New("map: worktree has uncommitted changes; finish `gnm add/get` + `gnm commit` first (see `gnm status`)")
+	// step 4: one local→worktree pass. In copy mode it also collects the
+	// metadata used to guard the later deploy, avoiding separate TOCTOU scans.
+	baselines, err := convergeIntoWorktree(env)
+	if err != nil {
+		return classifySpecial(env, err)
+	}
+	dirty, err := wtHasChanges(w)
+	if err != nil {
+		return err
+	}
+	if dirty && !auto {
+		return errors.New("map: local changes copied to worktree; run `gnm add -A`, `gnm commit`, then `gnm push`")
+	}
+	if dirty {
+		if err := commitWorktree(env, ""); err != nil {
+			return err
 		}
 	}
 
@@ -130,7 +125,7 @@ func runChain(env *Env, auto bool) error {
 	if err := w.Merge(branch); err != nil {
 		unmerged, uerr := w.Unmerged()
 		if uerr == nil && len(unmerged) > 0 {
-			_ = w.MergeAbort() // restore pre-merge committed content
+			abortErr := w.MergeAbort()
 			RemoveSyncable(env)
 			WriteBlocked(env, &BlockedState{
 				Reason:    "merge-conflict",
@@ -138,24 +133,55 @@ func runChain(env *Env, auto bool) error {
 				Conflicts: unmerged,
 				GitHead:   g.Head(),
 			})
+			if abortErr != nil {
+				return fmt.Errorf("map: merge conflict; merge --abort also failed: %v", abortErr)
+			}
 			return fmt.Errorf("map: merge conflict in %d file(s); run `gnm pull`, choose with `gnm add|get`, commit, then push", len(unmerged))
 		}
 		return fmt.Errorf("map: worktree merge %s: %w", branch, err)
 	}
 
-	// step 7: post-merge re-check. On violation undo ONLY the merge commit
-	// just created — its tree equals the protected pre-merge state, so this
-	// hard reset never touches user content (§9 rule 4 targets base switches).
+	// step 7: post-merge root check. reset --merge restores the old commit
+	// without using reset --hard on the machine worktree.
 	if viol := rootViolations(env); viol != "" {
-		_ = w.ResetHard(preMerge)
+		if err := w.ResetMerge(preMerge); err != nil {
+			viol += fmt.Sprintf("; restore merge failed: %v", err)
+		}
 		RemoveSyncable(env)
 		WriteBlocked(env, &BlockedState{Reason: "mapping-root", Detail: viol})
 		return fmt.Errorf("map: mapping root diverged after merge; reverted merge\n  %s", viol)
 	}
+	if env.LinkMode() {
+		if dirty, err := wtHasChanges(w); err != nil {
+			return err
+		} else if dirty {
+			RemoveSyncable(env)
+			return errors.New("map: mapped files changed during merge; local content kept, review and push again")
+		}
+	}
 
-	// step 8: deploy merged worktree content down to the local files
-	if err := deployFromWorktree(env); err != nil {
-		return classifySpecial(env, err)
+	// step 8: link cleanup is cheap. Copy mode first asks Git whether any
+	// mapped path changed, avoiding a full deploy scan for unrelated commits.
+	deploy := env.LinkMode()
+	mergedHead := w.Head()
+	if !deploy && preMerge != mergedHead {
+		paths := make([]string, 0, len(env.Cfg.Map.Items))
+		for _, item := range env.Cfg.Map.Items {
+			path, err := RepoPathOf(item, env.MapRoot)
+			if err != nil {
+				return err
+			}
+			paths = append(paths, path)
+		}
+		deploy, err = w.PathsChanged(preMerge, mergedHead, paths...)
+		if err != nil {
+			return err
+		}
+	}
+	if deploy {
+		if err := deployFromWorktree(env, baselines); err != nil {
+			return classifySpecial(env, err)
+		}
 	}
 
 	// step 9: fast-forward git-root to the merged worktree HEAD
@@ -178,7 +204,9 @@ func runChain(env *Env, auto bool) error {
 	}
 
 	// step 11: success — arm/keep the gate and clear stale block info
-	CreateSyncable(env)
+	if err := CreateSyncable(env); err != nil {
+		return fmt.Errorf("map: synchronized but could not create .syncable: %w", err)
+	}
 	ClearBlocked(env)
 	env.logf("map %s: synced → %s/%s", env.MapRoot, remote, rbranch)
 	return nil
@@ -199,9 +227,17 @@ func rootViolations(env *Env) string {
 			continue
 		}
 		wk := kindOf(wtPath)
-		// In link mode a mapped symlink IS the repo-side node: comparing its
-		// kind against the worktree's would flag the normal steady state.
-		if env.LinkMode() && lk == kSymlink {
+		if env.LinkMode() {
+			switch {
+			case lk == kMissing && wk == kMissing:
+				continue
+			case lk != kSymlink:
+				probs = append(probs, fmt.Sprintf("%s: managed link is missing or replaced; choose with gnm add/get", it.LocalPath))
+				continue
+			case !linkPointsTo(localAbs, wtPath):
+				probs = append(probs, fmt.Sprintf("%s: link points outside the managed worktree", it.LocalPath))
+				continue
+			}
 			lk = wk
 		}
 		switch {
@@ -239,11 +275,12 @@ func wtTracks(env *Env, wt *git.Runner, item config.MapItem) bool {
 // convergeIntoWorktree copies local content up in copy mode (link mode needs
 // nothing: the worktree file IS the local file). Callers run the root checks
 // first, so every mapping here is consistent or consistently empty.
-func convergeIntoWorktree(env *Env) error {
+func convergeIntoWorktree(env *Env) (map[int]copyBaseline, error) {
 	if env.LinkMode() {
-		return nil
+		return nil, nil
 	}
-	for _, it := range env.Cfg.Map.Items {
+	baselines := make(map[int]copyBaseline, len(env.Cfg.Map.Items))
+	for i, it := range env.Cfg.Map.Items {
 		localAbs := NormalizeLocal(it.LocalPath)
 		if kindOf(localAbs) == kMissing {
 			continue // root violation would have caught real divergence
@@ -252,18 +289,20 @@ func convergeIntoWorktree(env *Env) error {
 		if err != nil {
 			continue
 		}
-		if err := SyncTree(localAbs, wtPath); err != nil {
-			return err
+		baseline, err := syncTreeTracked(localAbs, wtPath)
+		if err != nil {
+			return nil, err
 		}
+		baselines[i] = baseline
 	}
-	return nil
+	return baselines, nil
 }
 
 // deployFromWorktree pushes merged worktree content down to local files
 // (chain step 8): copy mode re-converges each subtree; link mode only makes
 // sure the root symlink exists for live mappings.
-func deployFromWorktree(env *Env) error {
-	for _, it := range env.Cfg.Map.Items {
+func deployFromWorktree(env *Env, baselines map[int]copyBaseline) error {
+	for i, it := range env.Cfg.Map.Items {
 		localAbs := NormalizeLocal(it.LocalPath)
 		wtPath, err := env.worktreePathOf(it)
 		if err != nil {
@@ -289,7 +328,7 @@ func deployFromWorktree(env *Env) error {
 		if err := ensureParent(localAbs); err != nil {
 			return err
 		}
-		if err := SyncTree(wtPath, localAbs); err != nil {
+		if err := syncTreeGuarded(wtPath, localAbs, baselines[i]); err != nil {
 			return err
 		}
 	}
@@ -300,7 +339,8 @@ func deployFromWorktree(env *Env) error {
 // the gated-off state (spec §6.4: such errors remove .syncable).
 func classifySpecial(env *Env, err error) error {
 	var sfe *SpecialFileError
-	if errors.As(err, &sfe) {
+	var cce *ConcurrentChangeError
+	if errors.As(err, &sfe) || errors.As(err, &cce) {
 		RemoveSyncable(env)
 		WriteBlocked(env, &BlockedState{Reason: "special-file", Detail: sfe.Error()})
 		return fmt.Errorf("%w; .syncable removed", err)
@@ -376,11 +416,18 @@ func shortErr(err error) string {
 // `gns map sync` that existing cron/systemd/launchd/daemon entries run
 // when map.sync=true (spec §7.4). Not-initialized machines skip silently.
 func RunSchedulerTick(cfg *config.Config, logf func(string, ...any)) error {
+	if !cfg.Map.Sync {
+		return nil
+	}
 	env, err := ResolveEnv(cfg, "", logf)
 	if err != nil {
 		return err
 	}
-	if !IsInitialized(env) || !cfg.Map.Sync {
+	if !IsInitialized(env) {
+		return nil
+	}
+	if !HasSyncable(env) {
+		env.logf("map %s: MANUAL_REQUIRED — skipped automatic sync; run `gnm status`", env.MapRoot)
 		return nil
 	}
 	return Sync(env)

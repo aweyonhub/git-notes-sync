@@ -10,6 +10,7 @@
   },
   "bin": {
     "gns": "npm/bin/gns.js",
+    "gnm": "npm/bin/gnm.js",
     "notes-sync": "npm/bin/gns.js"
   },
   "scripts": {

@@ -183,6 +183,68 @@ func TestInitPublishesLocalThenPushSyncRoundtrip(t *testing.T) {
 	}
 }
 
+func TestGetDirectoryRemovesFilesAbsentFromHead(t *testing.T) {
+	env, _, home := newTestEnv(t)
+	localDir := filepath.Join(home, "mapped")
+	writeFile(t, filepath.Join(localDir, "kept.txt"), "kept")
+	env.Cfg.Map.Items = []config.MapItem{
+		{Scope: config.ScopeMapRoot, Path: "dot", LocalPath: localDir},
+	}
+	if err := Init(env); err != nil {
+		t.Fatal(err)
+	}
+	armGate(t, env)
+	wtDir := filepath.Join(env.Worktree, "tm", "dot")
+	writeFile(t, filepath.Join(localDir, "extra.txt"), "extra")
+	writeFile(t, filepath.Join(wtDir, "extra.txt"), "extra")
+
+	if err := Get(env, []string{localDir}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(localDir, "extra.txt")); !os.IsNotExist(err) {
+		t.Fatal("get kept a local file absent from HEAD")
+	}
+	if entries, err := env.wtRunner().Status(); err != nil || len(entries) != 0 {
+		t.Fatalf("get left worktree changes: %v, %v", entries, err)
+	}
+}
+
+func TestInitFailureCleansWorktreeAndKeepsLocal(t *testing.T) {
+	env, _, home := newTestEnv(t)
+	first := filepath.Join(home, "first.txt")
+	writeFile(t, first, "keep")
+	writeFile(t, filepath.Join(env.GitRoot, "tm", "second", "file.txt"), "repo")
+	gitCmd(t, env.GitRoot, "add", "-A")
+	gitCmd(t, env.GitRoot, "commit", "-m", "add second")
+
+	blocker := filepath.Join(home, "blocker")
+	writeFile(t, blocker, "not a directory")
+	env.Cfg.Map.Items = []config.MapItem{
+		{Scope: config.ScopeMapRoot, Path: "first.txt", LocalPath: first},
+		{Scope: config.ScopeMapRoot, Path: "second", LocalPath: filepath.Join(blocker, "child")},
+	}
+	if err := Init(env); err == nil {
+		t.Fatal("init unexpectedly succeeded")
+	}
+	if got := readFile(t, first); got != "keep" {
+		t.Fatalf("first local changed: %q", got)
+	}
+	if _, err := os.Stat(env.Worktree); !os.IsNotExist(err) {
+		t.Fatalf("worktree survived failed init: %v", err)
+	}
+	if env.gitRunner().BranchExists(BranchName(env.MapRoot)) {
+		t.Fatal("machine branch survived failed init")
+	}
+}
+
+func TestInitializedRequiresExpectedWorktreeBranch(t *testing.T) {
+	env, _, _, _ := setupMapped(t, "")
+	gitCmd(t, env.Worktree, "switch", "-c", "other")
+	if IsInitialized(env) {
+		t.Fatal("worktree on the wrong branch reported initialized")
+	}
+}
+
 func TestSyncConflictBlocksAndRecoveryFlow(t *testing.T) {
 	env, remote, local, _ := setupMapped(t, "")
 	armGate(t, env)

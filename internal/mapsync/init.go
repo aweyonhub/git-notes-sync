@@ -9,12 +9,23 @@ import (
 	"path/filepath"
 
 	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/git"
+	"github.com/aweyonhub/git-notes-sync/internal/lock"
 )
 
 // Init creates the machine worktree from git-root HEAD and applies every
 // configured mapping once, per the §4.5 table. It stays MANUAL_REQUIRED —
 // no .syncable is created until the first manual `gnm push` succeeds.
 func Init(env *Env) error {
+	if err := ensureStateDir(env); err != nil {
+		return err
+	}
+	unlock, err := lock.Acquire(env.State)
+	if err != nil {
+		return fmt.Errorf("map: %w", err)
+	}
+	defer unlock()
+
 	g := env.gitRunner()
 	if !g.IsRepo() {
 		return fmt.Errorf("map: git-root is not a repository: %s", env.GitRoot)
@@ -22,8 +33,19 @@ func Init(env *Env) error {
 	if g.Head() == "" {
 		return errors.New("map: git-root has no commits; make an initial commit first")
 	}
+	if g.CurrentBranch() == "" {
+		return errors.New("map: git-root is in detached HEAD; check out a branch first")
+	}
+	if entries, err := g.Status(); err != nil {
+		return fmt.Errorf("map: inspect git-root: %w", err)
+	} else if len(entries) != 0 {
+		return errors.New("map: git-root has uncommitted files; commit or remove them before init")
+	}
 	if errs := ValidateItems(env.Cfg.Map.Items, env.MapRoot); len(errs) > 0 {
 		return fmt.Errorf("map: invalid mappings (run `gnm config validate`): %v", errs[0])
+	}
+	if errs := ValidatePlacement(env.Cfg.Map.Items, env.GitRoot, env.MapRoot); len(errs) > 0 {
+		return fmt.Errorf("map: invalid mapping placement: %v", errs[0])
 	}
 
 	wtBranch := BranchName(env.MapRoot)
@@ -41,33 +63,73 @@ func Init(env *Env) error {
 			branchThere, dirThere, env.Worktree)
 	}
 
-	// persist auto's resolution so it stays fixed afterwards (§4.4)
-	if env.ConfigPath != "" && env.Cfg.Map.Mode != env.Mode {
-		if err := config.SetKey(env.ConfigPath, "map", "mode", env.Mode); err != nil {
-			env.logf("warn: persist resolved mode: %v", err)
-		} else {
-			env.Cfg.Map.Mode = env.Mode
-		}
-	}
-
 	// base is whatever git-root currently has checked out — never forced to main
 	if err := g.WorktreeAdd(wtBranch, env.Worktree, "HEAD"); err != nil {
+		_ = g.WorktreeRemove(env.Worktree)
+		_ = g.DeleteBranch(wtBranch)
 		return fmt.Errorf("map: create worktree: %w", err)
 	}
 	env.logf("map %s: worktree created (branch %s, mode %s)", env.MapRoot, wtBranch, env.Mode)
 
 	// materialize the per-machine config snapshot right away (§4.6)
 	if err := SaveSnapshot(env); err != nil {
-		env.logf("warn: write config snapshot: %v", err)
+		_ = g.WorktreeRemove(env.Worktree)
+		_ = g.DeleteBranch(wtBranch)
+		return fmt.Errorf("map: write config snapshot: %w", err)
 	}
 
+	var applied []initItem
 	for _, it := range env.Cfg.Map.Items {
+		entry := initItem{item: it, localExisted: kindOf(NormalizeLocal(it.LocalPath)) != kMissing}
 		if err := applyMappingItem(env, it); err != nil {
-			return fmt.Errorf("map item %s: %w", it.LocalPath, err)
+			cause := fmt.Errorf("map item %s: %w", it.LocalPath, err)
+			if cleanupErr := rollbackInit(env, g, wtBranch, applied); cleanupErr != nil {
+				return fmt.Errorf("%w; cleanup failed: %v", cause, cleanupErr)
+			}
+			return cause
 		}
+		applied = append(applied, entry)
 	}
 	env.logf("map %s: initialized — review with `gnm status`, choose via add/get, then `gnm commit` + `gnm push`", env.MapRoot)
 	return nil
+}
+
+type initItem struct {
+	item         config.MapItem
+	localExisted bool
+}
+
+func rollbackInit(env *Env, g *git.Runner, branch string, applied []initItem) error {
+	var first error
+	for i := len(applied) - 1; i >= 0; i-- {
+		entry := applied[i]
+		local := NormalizeLocal(entry.item.LocalPath)
+		wt, err := env.worktreePathOf(entry.item)
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		if env.LinkMode() && linkPointsTo(local, wt) {
+			_ = os.Remove(local)
+			if entry.localExisted {
+				err = SyncTree(wt, local)
+			}
+		} else if !entry.localExisted {
+			err = os.RemoveAll(local)
+		}
+		if err != nil && first == nil {
+			first = err
+		}
+	}
+	if err := g.WorktreeRemove(env.Worktree); err != nil && first == nil {
+		first = err
+	}
+	if err := g.DeleteBranch(branch); err != nil && first == nil {
+		first = err
+	}
+	return first
 }
 
 // applyMappingItem implements the §4.5 file table for a single mapping.
@@ -95,7 +157,11 @@ func applyMappingItem(env *Env, it config.MapItem) error {
 		if err := ensureParent(localAbs); err != nil {
 			return err
 		}
-		return SyncTree(wtPath, localAbs)
+		if err := SyncTree(wtPath, localAbs); err != nil {
+			_ = os.RemoveAll(localAbs)
+			return err
+		}
+		return nil
 	case lk != kMissing && wk == kMissing, lk != kMissing && wk != kMissing:
 		// local wins into the worktree; link mode then swaps the local path
 		// for a symlink pointing at what it just published
@@ -127,6 +193,9 @@ func removeMappingItem(env *Env, it config.MapItem) error {
 	lk, wk := kindOf(localAbs), kindOf(wtPath)
 
 	if lk == kSymlink && env.LinkMode() {
+		if !linkPointsTo(localAbs, wtPath) {
+			return fmt.Errorf("refusing to remove unmanaged symlink: %s", localAbs)
+		}
 		if err := os.Remove(localAbs); err != nil {
 			return err
 		}

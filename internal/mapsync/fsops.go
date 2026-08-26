@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type entryKind int
@@ -23,21 +24,32 @@ const (
 	kOther // socket / FIFO / device
 )
 
-func kindOf(path string) entryKind {
+func inspect(path string) (entryKind, os.FileInfo, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
-		return kMissing
+		if os.IsNotExist(err) {
+			return kMissing, nil, nil
+		}
+		return kOther, nil, err
 	}
 	switch {
 	case fi.Mode()&os.ModeSymlink != 0:
-		return kSymlink
+		return kSymlink, fi, nil
 	case fi.IsDir():
-		return kDir
+		return kDir, fi, nil
 	case fi.Mode().IsRegular():
-		return kFile
+		return kFile, fi, nil
 	default:
+		return kOther, fi, nil
+	}
+}
+
+func kindOf(path string) entryKind {
+	k, _, err := inspect(path)
+	if err != nil {
 		return kOther
 	}
+	return k
 }
 
 func kindName(k entryKind) string {
@@ -64,6 +76,25 @@ func (e *SpecialFileError) Error() string {
 	return fmt.Sprintf("refusing to copy special file: %s", e.Path)
 }
 
+// ConcurrentChangeError means a real file changed after it was copied into
+// the worktree. The caller stops and lets the user choose; no extra tree scan
+// is needed because the baseline is collected during the normal copy pass.
+type ConcurrentChangeError struct{ Path string }
+
+func (e *ConcurrentChangeError) Error() string {
+	return fmt.Sprintf("local path changed during synchronization: %s", e.Path)
+}
+
+type nodeStamp struct {
+	Kind   entryKind
+	Size   int64
+	Mtime  int64
+	Mode   os.FileMode
+	Target string
+}
+
+type copyBaseline map[string]nodeStamp
+
 // SyncTree converges dstRoot to srcRoot (spec §5.3):
 //
 //  1. missing/类型不同的目标 → 复制或替换；
@@ -71,32 +102,75 @@ func (e *SpecialFileError) Error() string {
 //  3. 目录始终递归，源端已删除的子文件自动删除目标端对应子文件；
 //  4. 复制走临时文件 + 原子替换，成功后同步源 mtime。
 func SyncTree(srcRoot, dstRoot string) error {
-	sk, dk := kindOf(srcRoot), kindOf(dstRoot)
-	if sk == kMissing {
-		if dk == kMissing {
-			return nil
+	return syncTree(srcRoot, dstRoot, "", nil, nil)
+}
+
+// syncTreeTracked performs the normal local→worktree copy and remembers the
+// local metadata already visited. syncTreeGuarded reuses that baseline while
+// deploying worktree→local, so TOCTOU protection adds no full-tree pass.
+func syncTreeTracked(srcRoot, dstRoot string) (copyBaseline, error) {
+	baseline := copyBaseline{}
+	err := syncTree(srcRoot, dstRoot, "", baseline, nil)
+	return baseline, err
+}
+
+func syncTreeGuarded(srcRoot, dstRoot string, baseline copyBaseline) error {
+	return syncTree(srcRoot, dstRoot, "", nil, baseline)
+}
+
+func syncTree(srcRoot, dstRoot, rel string, baseline, guard copyBaseline) error {
+	sk, si, err := inspect(srcRoot)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", srcRoot, err)
+	}
+	dk, di, err := inspect(dstRoot)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", dstRoot, err)
+	}
+	if baseline != nil {
+		stamp, err := makeStamp(srcRoot, sk, si)
+		if err != nil {
+			return err
 		}
-		return os.RemoveAll(dstRoot) // whole-subtree deletion propagates
+		baseline[rel] = stamp
+	}
+	if guard != nil {
+		if _, err := checkStamp(dstRoot, rel, guard); err != nil {
+			return err
+		}
 	}
 	if sk == kOther {
 		return &SpecialFileError{srcRoot}
 	}
 	if dk == kOther {
-		if err := os.RemoveAll(dstRoot); err != nil {
-			return err
-		}
-		dk = kMissing
+		return &SpecialFileError{dstRoot}
 	}
-	if sk != kDir && dk == kDir || sk == kDir && dk != kDir && dk != kMissing {
-		// type change: clear the destination before re-converging
+	if sk == kMissing {
+		if dk == kMissing {
+			return nil
+		}
+		if guard != nil {
+			if err := checkSubtree(dstRoot, rel, guard); err != nil {
+				return err
+			}
+		}
+		return os.RemoveAll(dstRoot)
+	}
+	if sk != dk && dk != kMissing {
+		if guard != nil && dk == kDir {
+			if err := checkSubtree(dstRoot, rel, guard); err != nil {
+				return err
+			}
+		}
 		if err := os.RemoveAll(dstRoot); err != nil {
 			return err
 		}
 		dk = kMissing
+		di = nil
 	}
 	switch sk {
 	case kFile:
-		return copyFileIfNeeded(srcRoot, dstRoot)
+		return copyFileIfNeeded(srcRoot, dstRoot, si, di)
 	case kSymlink:
 		tgt, err := os.Readlink(srcRoot)
 		if err != nil {
@@ -108,6 +182,9 @@ func SyncTree(srcRoot, dstRoot string) error {
 			}
 		}
 		if err := os.RemoveAll(dstRoot); err != nil {
+			return err
+		}
+		if err := ensureParent(dstRoot); err != nil {
 			return err
 		}
 		return os.Symlink(tgt, dstRoot)
@@ -122,57 +199,120 @@ func SyncTree(srcRoot, dstRoot string) error {
 		srcNames := make(map[string]bool, len(ents))
 		for _, e := range ents {
 			srcNames[e.Name()] = true
-			if err := SyncTree(filepath.Join(srcRoot, e.Name()), filepath.Join(dstRoot, e.Name())); err != nil {
+			childRel := e.Name()
+			if rel != "" {
+				childRel = rel + "/" + e.Name()
+			}
+			if err := syncTree(filepath.Join(srcRoot, e.Name()), filepath.Join(dstRoot, e.Name()), childRel, baseline, guard); err != nil {
 				return err
 			}
 		}
-		// prune destination children absent from source (deletion propagation)
 		dents, err := os.ReadDir(dstRoot)
 		if err != nil {
 			return err
 		}
 		for _, de := range dents {
 			if !srcNames[de.Name()] {
-				if err := os.RemoveAll(filepath.Join(dstRoot, de.Name())); err != nil {
+				childRel := de.Name()
+				if rel != "" {
+					childRel = rel + "/" + de.Name()
+				}
+				child := filepath.Join(dstRoot, de.Name())
+				if guard != nil {
+					if err := checkSubtree(child, childRel, guard); err != nil {
+						return err
+					}
+				}
+				if err := os.RemoveAll(child); err != nil {
 					return err
 				}
 			}
-		}
-		// keep the directory's own mtime in step so parent-level filters converge
-		if si, err := os.Lstat(srcRoot); err == nil {
-			mt := si.ModTime()
-			_ = os.Chtimes(dstRoot, mt, mt)
 		}
 	}
 	return nil
 }
 
-// needCopy implements the §5.3 filter: skip only when both sides are regular
-// files of equal size and mtime — content is never read and no hash computed.
-func needCopy(src, dst string) bool {
-	si, err1 := os.Lstat(src)
-	di, err2 := os.Lstat(dst)
-	if err1 != nil || err2 != nil {
-		return true
+func makeStamp(path string, kind entryKind, info os.FileInfo) (nodeStamp, error) {
+	s := nodeStamp{Kind: kind}
+	if info != nil && kind == kFile {
+		s.Size, s.Mtime, s.Mode = info.Size(), info.ModTime().UnixNano(), info.Mode().Perm()
 	}
-	if !si.Mode().IsRegular() || !di.Mode().IsRegular() {
-		return true
+	if kind == kSymlink {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return s, err
+		}
+		s.Target = target
 	}
-	if si.Size() != di.Size() {
-		return true
+	return s, nil
+}
+
+func checkStamp(path, rel string, baseline copyBaseline) (entryKind, error) {
+	expected, ok := baseline[rel]
+	kind, info, err := inspect(path)
+	if err != nil {
+		return kind, err
 	}
-	return !si.ModTime().Equal(di.ModTime())
+	current, err := makeStamp(path, kind, info)
+	if err != nil {
+		return kind, err
+	}
+	if !ok {
+		expected = nodeStamp{Kind: kMissing}
+	}
+	if current != expected {
+		return kind, &ConcurrentChangeError{path}
+	}
+	return kind, nil
+}
+
+func checkSubtree(root, rel string, baseline copyBaseline) error {
+	seen := map[string]bool{}
+	var walk func(string, string) error
+	walk = func(path, key string) error {
+		seen[key] = true
+		kind, err := checkStamp(path, key, baseline)
+		if err != nil {
+			return err
+		}
+		if kind != kDir {
+			return nil
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			childKey := entry.Name()
+			if key != "" {
+				childKey = key + "/" + entry.Name()
+			}
+			if err := walk(filepath.Join(path, entry.Name()), childKey); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(root, rel); err != nil {
+		return err
+	}
+	prefix := rel
+	if prefix != "" {
+		prefix += "/"
+	}
+	for key := range baseline {
+		if (key == rel || strings.HasPrefix(key, prefix)) && !seen[key] {
+			return &ConcurrentChangeError{root}
+		}
+	}
+	return nil
 }
 
 // copyFileIfNeeded copies via a temp file + atomic rename, preserving the
 // source permission bits (executable bit included) and mtime.
-func copyFileIfNeeded(src, dst string) error {
-	if !needCopy(src, dst) {
+func copyFileIfNeeded(src, dst string, si, di os.FileInfo) error {
+	if di != nil && di.Mode().IsRegular() && si.Size() == di.Size() && si.ModTime().Equal(di.ModTime()) && si.Mode().Perm() == di.Mode().Perm() {
 		return nil
-	}
-	si, err := os.Lstat(src)
-	if err != nil {
-		return err
 	}
 	in, err := os.Open(src)
 	if err != nil {
@@ -218,13 +358,11 @@ func copyFileIfNeeded(src, dst string) error {
 // EnsureSymlink points linkPath at target, replacing any existing node there
 // (spec §4.4: link creation failure reports an error, never silently copies).
 func EnsureSymlink(linkPath, target string) error {
-	if kindOf(linkPath) == kSymlink {
-		if cur, err := os.Readlink(linkPath); err == nil && cur == target {
-			return nil
-		}
+	if linkPointsTo(linkPath, target) {
+		return nil
 	}
-	if err := os.RemoveAll(linkPath); err != nil {
-		return err
+	if kindOf(linkPath) != kMissing {
+		return fmt.Errorf("refusing to replace unmanaged path: %s", linkPath)
 	}
 	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
 		return err
@@ -237,14 +375,16 @@ func EnsureSymlink(linkPath, target string) error {
 // the symlink, verify it resolves, then drop the backup. Any failure rolls
 // the original path back — no lost files, no half-built mappings.
 func ReplaceLocalWithLink(localAbs, wtPath string, syncFn func() error) error {
-	bak := localAbs + ".gns-bak"
-	_ = os.RemoveAll(bak)
+	if linkPointsTo(localAbs, wtPath) {
+		return nil
+	}
 	if syncFn != nil {
 		if err := syncFn(); err != nil {
 			return fmt.Errorf("copy into worktree: %w", err)
 		}
 	}
-	if err := os.Rename(localAbs, bak); err != nil {
+	bak, err := moveAside(localAbs)
+	if err != nil {
 		return fmt.Errorf("set aside %s: %w", localAbs, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(localAbs), 0o755); err != nil {
@@ -261,10 +401,49 @@ func ReplaceLocalWithLink(localAbs, wtPath string, syncFn func() error) error {
 		_ = os.Rename(bak, localAbs)
 		return fmt.Errorf("verify symlink: %w", err)
 	}
-	if err := os.RemoveAll(bak); err != nil {
-		return fmt.Errorf("remove backup %s: %w", bak, err)
-	}
+	// The mapping is already live; a leftover backup is safer than turning a
+	// cleanup warning into a partial-init failure.
+	_ = os.RemoveAll(bak)
 	return nil
+}
+
+func moveAside(path string) (string, error) {
+	if kindOf(path) == kMissing {
+		return "", nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".gns-bak-*")
+	if err != nil {
+		return "", err
+	}
+	bak := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(bak)
+		return "", err
+	}
+	if err := os.Remove(bak); err != nil {
+		return "", err
+	}
+	if err := os.Rename(path, bak); err != nil {
+		return "", err
+	}
+	return bak, nil
+}
+
+func linkPointsTo(linkPath, target string) bool {
+	if kindOf(linkPath) != kSymlink {
+		return false
+	}
+	current, err := os.Readlink(linkPath)
+	if err != nil {
+		return false
+	}
+	if !filepath.IsAbs(current) {
+		current = filepath.Join(filepath.Dir(linkPath), current)
+	}
+	return LocalKey(NormalizeLocal(current)) == LocalKey(NormalizeLocal(target))
 }
 
 // walkNodes lists every node (files, links, dirs — relative slash paths)

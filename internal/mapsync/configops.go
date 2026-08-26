@@ -12,6 +12,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/lock"
 )
 
 // ---------- list / validate ----------
@@ -66,8 +67,35 @@ func ValidateReport(cfg *config.Config) []error {
 	}
 	if cfg.Map.MapRoot != "" {
 		errs = append(errs, ValidateItems(cfg.Map.Items, cfg.Map.MapRoot)...)
+		errs = append(errs, ValidatePlacement(cfg.Map.Items, cfg.Map.GitRoot, cfg.Map.MapRoot)...)
 	}
 	return errs
+}
+
+// RequireMutableBase keeps an initialized mapping from being reinterpreted
+// under a different repository, namespace or mode.
+func RequireMutableBase(cfg *config.Config) error {
+	if cfg == nil || len(cfg.Map.Items) == 0 || cfg.Map.MapRoot == "" {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(WorktreeDir(cfg.Map.MapRoot), ".git")); err == nil {
+		return errors.New("remove all mappings before changing git-root, map-root or mode")
+	}
+	return nil
+}
+
+func lockMap(env *Env) (func(), error) {
+	if env == nil {
+		return func() {}, nil
+	}
+	if err := ensureStateDir(env); err != nil {
+		return nil, err
+	}
+	unlock, err := lock.Acquire(env.State)
+	if err != nil {
+		return nil, fmt.Errorf("map: %w", err)
+	}
+	return unlock, nil
 }
 
 func max(a, b string) string {
@@ -83,10 +111,13 @@ func max(a, b string) string {
 // already initialized — immediately materializes it and disarms .syncable
 // (spec §4.5). cfg must be the freshly loaded config for cfgPath.
 func AddItem(cfgPath string, cfg *config.Config, scope, repoPath, local string, env *Env) error {
+	if strings.TrimSpace(local) == "" {
+		return errors.New("local path must not be empty")
+	}
 	item := config.MapItem{
 		Scope:     scope,
 		Path:      filepath.ToSlash(filepath.Clean(strings.TrimSpace(repoPath))),
-		LocalPath: local,
+		LocalPath: expandHomeTilde(local),
 	}
 	if item.Scope != config.ScopeMapRoot && item.Scope != config.ScopeGitRoot {
 		return fmt.Errorf("invalid scope %q (use -a for map-root scope, -A for git-root scope)", scope)
@@ -105,20 +136,28 @@ func AddItem(cfgPath string, cfg *config.Config, scope, repoPath, local string, 
 		}
 		rpEx, _ := RepoPathOf(ex, cfg.Map.MapRoot)
 		rpNew, _ := RepoPathOf(item, cfg.Map.MapRoot)
-		if rpEx == rpNew {
+		if repoKey(rpEx) == repoKey(rpNew) {
 			return fmt.Errorf("repo path already mapped: %s", rpNew)
 		}
 	}
 	if errs := ValidateItems(append(append([]config.MapItem{}, cfg.Map.Items...), item), cfg.Map.MapRoot); len(errs) > 0 {
 		return errs[0]
 	}
+	if errs := ValidatePlacement(append(append([]config.MapItem{}, cfg.Map.Items...), item), cfg.Map.GitRoot, cfg.Map.MapRoot); len(errs) > 0 {
+		return errs[0]
+	}
+	unlock, err := lockMap(env)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	f, err := os.OpenFile(cfgPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
 	block := fmt.Sprintf("\n[[map.items]]\nscope = %q\npath = %q\nlocal_path = %q\n",
-		item.Scope, item.Path, expandHomeTilde(item.LocalPath))
+		item.Scope, item.Path, item.LocalPath)
 	if _, err := f.WriteString(block); err != nil {
 		f.Close()
 		return err
@@ -129,10 +168,10 @@ func AddItem(cfgPath string, cfg *config.Config, scope, repoPath, local string, 
 	cfg.Map.Items = append(cfg.Map.Items, item)
 
 	if env != nil { // initialized: apply now and demand re-confirmation (§4.5)
+		RemoveSyncable(env)
 		if err := applyMappingItem(env, item); err != nil {
 			return fmt.Errorf("apply mapping: %w", err)
 		}
-		RemoveSyncable(env)
 		env.logf("map %s: mapping applied; .syncable removed — push again to re-arm", env.MapRoot)
 	}
 	return nil
@@ -142,8 +181,17 @@ func AddItem(cfgPath string, cfg *config.Config, scope, repoPath, local string, 
 // anything else is stored normalized.
 func expandHomeTilde(local string) string {
 	norm := NormalizeLocal(local)
-	if h, err := os.UserHomeDir(); err == nil && strings.HasPrefix(norm, h) {
-		return "~" + norm[len(h):]
+	if home, err := os.UserHomeDir(); err == nil {
+		home = NormalizeLocal(home)
+		if within(LocalKey(norm), LocalKey(home)) {
+			rel, err := filepath.Rel(home, norm)
+			if err == nil && rel == "." {
+				return "~"
+			}
+			if err == nil {
+				return "~/" + filepath.ToSlash(rel)
+			}
+		}
 	}
 	return norm
 }
@@ -178,19 +226,28 @@ func RemoveItems(cfgPath string, cfg *config.Config, locals []string, all bool, 
 		}
 		return fmt.Errorf("no mapping for %v", locals)
 	}
-
-	if _, err := removeItemBlocksWhere(cfgPath, matched); err != nil {
+	if !all && len(removedDefs) != len(targets) {
+		return errors.New("one or more paths are not exact mappings; nothing removed")
+	}
+	unlock, err := lockMap(env)
+	if err != nil {
 		return err
 	}
-	cfg.Map.Items = keep
+	defer unlock()
 
 	if env != nil {
+		RemoveSyncable(env)
 		for _, it := range removedDefs {
 			if err := removeMappingItem(env, it); err != nil {
 				return fmt.Errorf("unmap %s: %w", it.LocalPath, err)
 			}
 		}
-		RemoveSyncable(env)
+	}
+	if _, err := removeItemBlocksWhere(cfgPath, matched); err != nil {
+		return err
+	}
+	cfg.Map.Items = keep
+	if env != nil {
 		env.logf("map %s: %d mapping(s) removed; .syncable removed — review with `gnm status`", env.MapRoot, len(removedDefs))
 	}
 	return nil
@@ -258,10 +315,11 @@ func parseItemKV(line, key string) (string, bool) {
 		return "", false
 	}
 	rest = strings.TrimSpace(rest[1:])
-	if len(rest) >= 2 && rest[0] == '"' && rest[len(rest)-1] == '"' {
-		rest = rest[1 : len(rest)-1]
+	var value map[string]string
+	if _, err := toml.Decode(key+" = "+rest, &value); err != nil {
+		return "", false
 	}
-	return rest, rest != ""
+	return value[key], value[key] != ""
 }
 
 // ---------- snapshot (save / load) ----------
@@ -279,7 +337,9 @@ func SaveSnapshot(env *Env) error {
 	}
 	var buf strings.Builder
 	buf.WriteString("# machine map snapshot (managed by `gnm config save`)\n")
-	if err := toml.NewEncoder(&buf).Encode(snapshotFile{Map: snapshotSection(*env.Cfg)}); err != nil {
+	section := snapshotSection(*env.Cfg)
+	section.MapRoot = env.MapRoot
+	if err := toml.NewEncoder(&buf).Encode(snapshotFile{Map: section}); err != nil {
 		return err
 	}
 	return os.WriteFile(path, []byte(buf.String()), 0o644)
@@ -308,6 +368,9 @@ func LoadSnapshot(cfgPath string, cfg *config.Config, mapRootArg string, logf fu
 	if effective == "" {
 		effective = cfg.Map.MapRoot
 	}
+	if err := ValidMapRoot(effective); err != nil {
+		return err
+	}
 	if effective == "" {
 		return errors.New("no map-root given and none configured; run `gnm config map-root <name>`")
 	}
@@ -319,6 +382,26 @@ func LoadSnapshot(cfgPath string, cfg *config.Config, mapRootArg string, logf fu
 	var snap snapshotFile
 	if _, err := toml.Decode(blob, &snap); err != nil {
 		return fmt.Errorf("parse snapshot: %w", err)
+	}
+	// Repository location and scheduler preference belong to this machine;
+	// the selected snapshot supplies mappings, mode and the target map-root.
+	snap.Map.GitRoot = cfg.Map.GitRoot
+	snap.Map.MapRoot = effective
+	snap.Map.Sync = cfg.Map.Sync
+	if snap.Map.Mode == "" {
+		snap.Map.Mode = "auto"
+	}
+	if snap.Map.Mode != "auto" && snap.Map.Mode != "link" && snap.Map.Mode != "copy" {
+		return fmt.Errorf("snapshot mode is invalid: %q", snap.Map.Mode)
+	}
+	for i := range snap.Map.Items {
+		snap.Map.Items[i].LocalPath = expandHomeTilde(snap.Map.Items[i].LocalPath)
+	}
+	if errs := ValidateItems(snap.Map.Items, effective); len(errs) > 0 {
+		return fmt.Errorf("snapshot mappings: %v", errs[0])
+	}
+	if errs := ValidatePlacement(snap.Map.Items, cfg.Map.GitRoot, effective); len(errs) > 0 {
+		return fmt.Errorf("snapshot mappings: %v", errs[0])
 	}
 
 	// scalars via the standard editor (line-level, comments preserved)
@@ -349,9 +432,13 @@ func LoadSnapshot(cfgPath string, cfg *config.Config, mapRootArg string, logf fu
 			return err
 		}
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		return err
+	}
 
-	cfg.Map = snapshotSection(config.Config{Map: snap.Map})
+	loaded := snapshotSection(config.Config{Map: snap.Map})
+	loaded.Sync = cfg.Map.Sync
+	cfg.Map = loaded
 	if logf != nil {
 		logf("map %s: imported %d item(s) from snapshot", snap.Map.MapRoot, len(snap.Map.Items))
 		logf("next: `gnm init` applies every mapping")

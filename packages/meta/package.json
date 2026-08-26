@@ -13,6 +13,7 @@
   },
   "bin": {
     "gns": "bin/gns.js",
+    "gnm": "bin/gnm.js",
     "notes-sync": "bin/gns.js"
   },
   "scripts": {},
