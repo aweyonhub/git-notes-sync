@@ -178,9 +178,25 @@ func CreateSyncable(env *Env) error {
 	return os.WriteFile(SyncablePath(env), []byte(line), 0o644)
 }
 
-// RemoveSyncable disarms the gate; every caller pairs it with a blocked-state
-// write so `gnm status` can explain why (spec §3.2).
-func RemoveSyncable(env *Env) { _ = os.Remove(SyncablePath(env)) }
+// RemoveSyncable disarms the gate; failure is returned because silently
+// leaving the marker armed would let the scheduler retry unsafe content.
+func RemoveSyncable(env *Env) error {
+	stateInfo, err := os.Stat(env.State)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !stateInfo.IsDir() {
+		return fmt.Errorf("map state path is not a directory: %s", env.State)
+	}
+	err = os.Remove(SyncablePath(env))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
 
 // ---------- blocked state (why MANUAL_REQUIRED) ----------
 
@@ -194,15 +210,27 @@ type BlockedState struct {
 
 func BlockedPath(env *Env) string { return filepath.Join(env.State, "blocked.json") }
 
-func WriteBlocked(env *Env, b *BlockedState) {
+func WriteBlocked(env *Env, b *BlockedState) error {
 	if err := ensureStateDir(env); err != nil {
-		return
+		return err
 	}
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
-	_ = os.WriteFile(BlockedPath(env), append(data, '\n'), 0o644)
+	return os.WriteFile(BlockedPath(env), append(data, '\n'), 0o644)
+}
+
+// blockAndStop records a manual boundary without hiding a failure to disarm
+// or persist the reason. The primary error remains visible to the caller.
+func blockAndStop(env *Env, state *BlockedState, primary error) error {
+	if err := RemoveSyncable(env); err != nil {
+		return fmt.Errorf("%w; remove .syncable: %v", primary, err)
+	}
+	if err := WriteBlocked(env, state); err != nil {
+		return fmt.Errorf("%w; write blocked state: %v", primary, err)
+	}
+	return primary
 }
 
 // ReadBlocked loads the blocked record; (nil, nil) when not blocked.

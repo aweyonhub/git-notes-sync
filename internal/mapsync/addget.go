@@ -30,7 +30,7 @@ func Add(env *Env, args []string, all bool) error {
 			return fmt.Errorf("map: %w", err)
 		}
 		defer unlock()
-		if _, err := convergeIntoWorktree(env); err != nil {
+		if _, err := convergeIntoWorktree(env, true); err != nil {
 			return classifySpecial(env, err)
 		}
 		if err := env.wtRunner().AddAll(); err != nil {

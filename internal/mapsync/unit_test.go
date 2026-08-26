@@ -107,6 +107,54 @@ func TestMapPathSafety(t *testing.T) {
 	}
 }
 
+func TestDeployLinkRefusesUnmanagedLocalFile(t *testing.T) {
+	tmp := t.TempDir()
+	local := filepath.Join(tmp, "local")
+	wt := filepath.Join(tmp, "worktree")
+	writeF(t, local, "keep")
+	env := &Env{
+		Cfg:      &config.Config{Map: config.Map{Items: []config.MapItem{{Scope: config.ScopeMapRoot, Path: "file", LocalPath: local}}}},
+		MapRoot:  "tm",
+		Worktree: wt,
+		Mode:     "link",
+	}
+	if err := deployFromWorktree(env, nil); err == nil {
+		t.Fatal("deploy removed an unmanaged local file")
+	}
+	if got := string(mustRead(t, local)); got != "keep" {
+		t.Fatalf("local file changed: %q", got)
+	}
+}
+
+func TestGateStateWritesReturnErrors(t *testing.T) {
+	tmp := t.TempDir()
+	stateFile := filepath.Join(tmp, "state")
+	writeF(t, stateFile, "not a directory")
+	env := &Env{State: stateFile}
+	if err := RemoveSyncable(env); err == nil {
+		t.Fatal("RemoveSyncable hid a parent path error")
+	}
+	if err := WriteBlocked(env, &BlockedState{Reason: "test"}); err == nil {
+		t.Fatal("WriteBlocked hid a state directory error")
+	}
+}
+
+func TestExactSelectionRejectsMissingChild(t *testing.T) {
+	tmp := t.TempDir()
+	localRoot := filepath.Join(tmp, "local")
+	if err := os.MkdirAll(localRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := &Env{
+		Cfg:      &config.Config{Map: config.Map{Items: []config.MapItem{{Scope: config.ScopeMapRoot, Path: "root", LocalPath: localRoot}}}},
+		MapRoot:  "tm",
+		Worktree: filepath.Join(tmp, "worktree"),
+	}
+	if _, err := selectNodes(env, []string{filepath.Join(localRoot, "missing")}, false, sideWorktree); err == nil {
+		t.Fatal("missing exact path was accepted")
+	}
+}
+
 func writeF(t *testing.T, path, content string) time.Time {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -302,6 +350,17 @@ func TestEnsureSymlinkRefusesExistingPath(t *testing.T) {
 	}
 }
 
+func TestQuoteCLIUsesPlatformShellSyntax(t *testing.T) {
+	path := filepath.Join("dir with space", "file.txt")
+	want := "'" + path + "'"
+	if IsWindows() {
+		want = `"` + path + `"`
+	}
+	if got := quoteCLI(path); got != want {
+		t.Fatalf("quoteCLI(%q) = %q, want %q", path, got, want)
+	}
+}
+
 func TestWildcardCanSelectMappingRoots(t *testing.T) {
 	tmp := t.TempDir()
 	parent := filepath.Join(tmp, "pi")
@@ -375,5 +434,45 @@ func TestRemoveItemBlocksWhereKeepsOtherContent(t *testing.T) {
 	}
 	if len(cfg2.Map.Items) != 2 {
 		t.Fatalf("expected 2 items after add, got %d", len(cfg2.Map.Items))
+	}
+}
+
+func TestAddItemRollsBackConfigWhenApplyFails(t *testing.T) {
+	env, _, _, home := setupMapped(t, "")
+	blocker := filepath.Join(home, "blocker")
+	writeFile(t, blocker, "not a directory")
+	writeFile(t, filepath.Join(env.Worktree, "tm", "rollback.txt"), "repo\n")
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	oldLen := len(env.Cfg.Map.Items)
+	err := AddItem(cfgPath, env.Cfg, config.ScopeMapRoot, "rollback.txt", filepath.Join(blocker, "child"), env)
+	if err == nil {
+		t.Fatal("AddItem unexpectedly succeeded")
+	}
+	if len(env.Cfg.Map.Items) != oldLen {
+		t.Fatalf("config items changed after failed add: %d -> %d", oldLen, len(env.Cfg.Map.Items))
+	}
+	raw, readErr := os.ReadFile(cfgPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(raw), "rollback.txt") {
+		t.Fatalf("failed mapping remained in config:\n%s", raw)
+	}
+}
+
+func TestRemoveItemsRestoresMappingWhenConfigUpdateFails(t *testing.T) {
+	env, _, _, _ := setupMapped(t, "")
+	cfgPath := filepath.Join(t.TempDir(), "config-dir")
+	if err := os.MkdirAll(cfgPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveItems(cfgPath, env.Cfg, []string{env.Cfg.Map.Items[0].LocalPath}, false, env); err == nil {
+		t.Fatal("RemoveItems unexpectedly succeeded with a directory config path")
+	}
+	if len(env.Cfg.Map.Items) != 1 {
+		t.Fatal("mapping definition was removed after config update failure")
+	}
+	if _, err := os.Stat(mappedWtFile(env)); err != nil {
+		t.Fatalf("worktree mapping was not restored: %v", err)
 	}
 }

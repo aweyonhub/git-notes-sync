@@ -48,6 +48,24 @@ func TestCmdConfig_SetTopLevel(t *testing.T) {
 	}
 }
 
+func TestMapStatusBeforeConfigurationIsActionable(t *testing.T) {
+	p := newCfgFile(t, "")
+	out := captureStdout(t, func() error {
+		return cmdMap([]string{"status", "-c", p})
+	})
+	if !strings.Contains(out, "state:      NOT_INITIALIZED") || !strings.Contains(out, "gnm config git-root") {
+		t.Fatalf("unconfigured map status = %q", out)
+	}
+}
+
+func TestMapAllRejectsPositionalPath(t *testing.T) {
+	p := newCfgFile(t, "")
+	err := cmdMap([]string{"add", "-A", "some/path", "-c", p})
+	if err == nil || !strings.Contains(err.Error(), "usage: gnm add") {
+		t.Fatalf("add -A with path error = %v", err)
+	}
+}
+
 func TestCmdConfig_SetNested(t *testing.T) {
 	p := newCfgFile(t, `[ai]
 type = "api"

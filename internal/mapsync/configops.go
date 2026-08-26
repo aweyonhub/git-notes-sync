@@ -56,7 +56,7 @@ func ValidateReport(cfg *config.Config) []error {
 		errs = append(errs, fmt.Errorf("map.mode must be auto|link|copy, got %q", cfg.Map.Mode))
 	}
 	for i, it := range cfg.Map.Items {
-		if _, err := RepoPathOf(it, max(cfg.Map.MapRoot, "x")); err != nil {
+		if _, err := validateRepoRel(it); err != nil {
 			errs = append(errs, fmt.Errorf("item #%d (%s): %v", i+1, it.LocalPath, err))
 			continue
 		}
@@ -98,14 +98,12 @@ func lockMap(env *Env) (func(), error) {
 	return unlock, nil
 }
 
-func max(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}
-
 // ---------- [[map.items]] textual editing ----------
+
+func mapItemBlock(item config.MapItem) string {
+	return fmt.Sprintf("\n[[map.items]]\nscope = %q\npath = %q\nlocal_path = %q\n",
+		item.Scope, item.Path, item.LocalPath)
+}
 
 // AddItem appends one mapping to the user config and — when the worktree is
 // already initialized — immediately materializes it and disarms .syncable
@@ -151,33 +149,48 @@ func AddItem(cfgPath string, cfg *config.Config, scope, repoPath, local string, 
 		return err
 	}
 	defer unlock()
+	oldItems := append([]config.MapItem(nil), cfg.Map.Items...)
 
 	f, err := os.OpenFile(cfgPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	block := fmt.Sprintf("\n[[map.items]]\nscope = %q\npath = %q\nlocal_path = %q\n",
-		item.Scope, item.Path, item.LocalPath)
-	if _, err := f.WriteString(block); err != nil {
+	if _, err := f.WriteString(mapItemBlock(item)); err != nil {
 		f.Close()
 		return err
 	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	cfg.Map.Items = append(cfg.Map.Items, item)
-
 	if env != nil { // initialized: apply now and demand re-confirmation (§4.5)
-		RemoveSyncable(env)
+		rollbackConfig := func() error {
+			_, rollbackErr := removeItemBlocksWhere(cfgPath, func(existing config.MapItem) bool {
+				return existing.Scope == item.Scope && existing.Path == item.Path && existing.LocalPath == item.LocalPath
+			})
+			cfg.Map.Items = oldItems
+			return rollbackErr
+		}
+		if err := RemoveSyncable(env); err != nil {
+			if rollbackErr := rollbackConfig(); rollbackErr != nil {
+				return fmt.Errorf("disarm .syncable: %w (config rollback failed: %v)", err, rollbackErr)
+			}
+			return fmt.Errorf("disarm .syncable: %w", err)
+		}
 		if err := applyMappingItem(env, item); err != nil {
+			if rollbackErr := rollbackConfig(); rollbackErr != nil {
+				return fmt.Errorf("apply mapping: %w (config rollback failed: %v)", err, rollbackErr)
+			}
 			return fmt.Errorf("apply mapping: %w", err)
 		}
+		cfg.Map.Items = append(oldItems, item)
 		env.logf("map %s: mapping applied; .syncable removed — push again to re-arm", env.MapRoot)
+		return nil
 	}
+	cfg.Map.Items = append(oldItems, item)
 	return nil
 }
 
-// expandHomeTilde keeps ~/ local paths portable across machines (§3.3);
+// expandHomeTilde keeps ~/ local paths portable across machines (§4.3);
 // anything else is stored normalized.
 func expandHomeTilde(local string) string {
 	norm := NormalizeLocal(local)
@@ -236,14 +249,30 @@ func RemoveItems(cfgPath string, cfg *config.Config, locals []string, all bool, 
 	defer unlock()
 
 	if env != nil {
-		RemoveSyncable(env)
-		for _, it := range removedDefs {
+		if err := RemoveSyncable(env); err != nil {
+			return fmt.Errorf("disarm .syncable: %w", err)
+		}
+		for i, it := range removedDefs {
 			if err := removeMappingItem(env, it); err != nil {
+				for j := i; j >= 0; j-- {
+					_ = applyMappingItem(env, removedDefs[j])
+				}
 				return fmt.Errorf("unmap %s: %w", it.LocalPath, err)
 			}
 		}
 	}
 	if _, err := removeItemBlocksWhere(cfgPath, matched); err != nil {
+		if env != nil {
+			var rollbackErr error
+			for i := len(removedDefs) - 1; i >= 0; i-- {
+				if rerr := applyMappingItem(env, removedDefs[i]); rerr != nil && rollbackErr == nil {
+					rollbackErr = rerr
+				}
+			}
+			if rollbackErr != nil {
+				return fmt.Errorf("remove config: %w (filesystem rollback failed: %v)", err, rollbackErr)
+			}
+		}
 		return err
 	}
 	cfg.Map.Items = keep
@@ -426,8 +455,7 @@ func LoadSnapshot(cfgPath string, cfg *config.Config, mapRootArg string, logf fu
 		return err
 	}
 	for _, it := range snap.Map.Items {
-		if _, err := f.WriteString(fmt.Sprintf("\n[[map.items]]\nscope = %q\npath = %q\nlocal_path = %q\n",
-			it.Scope, it.Path, it.LocalPath)); err != nil {
+		if _, err := f.WriteString(mapItemBlock(it)); err != nil {
 			f.Close()
 			return err
 		}

@@ -1,4 +1,4 @@
-// wildcards.go: `*` pattern expansion over mapped subtrees (spec §5.1/§6.3).
+// wildcards.go: `*` pattern expansion over mapped subtrees (spec §5.1/§6.5).
 package mapsync
 
 import (
@@ -72,7 +72,17 @@ func selectNodes(env *Env, args []string, all bool, side gitSide) (map[int][]str
 				return nil, fmt.Errorf("map add/get: %v", err)
 			}
 			rootAbs := NormalizeLocal(env.Cfg.Map.Items[idx].LocalPath)
-			add(idx, relUnder(LocalKey(rootAbs), LocalKey(norm)))
+			rel := relUnder(LocalKey(rootAbs), LocalKey(norm))
+			if rel != "" {
+				exists, err := exactSelectionExists(env, env.Cfg.Map.Items[idx], rel, side)
+				if err != nil {
+					return nil, err
+				}
+				if !exists {
+					return nil, fmt.Errorf("map add/get: path does not exist on either selected side: %s", arg)
+				}
+			}
+			add(idx, rel)
 			continue
 		}
 
@@ -114,8 +124,22 @@ func selectNodes(env *Env, args []string, all bool, side gitSide) (map[int][]str
 	return out, nil
 }
 
+func exactSelectionExists(env *Env, item config.MapItem, rel string, side gitSide) (bool, error) {
+	if kindOf(env.localJoin(item, rel)) != kMissing {
+		return true, nil
+	}
+	wtPath, repoRel, err := env.worktreeJoin(item, rel)
+	if err != nil {
+		return false, err
+	}
+	if side == sideWorktree {
+		return kindOf(wtPath) != kMissing, nil
+	}
+	return env.headContains(item, repoRel)
+}
+
 // unionCandidates enumerates the candidate node set for one mapping:
-// the local filesystem plus the requested git side (spec §6.3: add matches
+// the local filesystem plus the requested git side (spec §6.5: add matches
 // the local∪worktree union so deletions of locally-removed files stay
 // selectable; get matches local∪HEAD).
 func unionCandidates(env *Env, item config.MapItem, side gitSide) ([]string, error) {

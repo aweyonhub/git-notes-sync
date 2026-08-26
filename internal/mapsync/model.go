@@ -17,7 +17,7 @@ func IsWindows() bool { return runtime.GOOS == "windows" }
 
 // NormalizeLocal expands ~, resolves relative paths against cwd and cleans
 // the result. It deliberately does NOT resolve symlinks: the link node
-// itself is the mapped identity (spec §3.3).
+// itself is the mapped identity (spec §4.3).
 func NormalizeLocal(p string) string {
 	p = expandHome(strings.TrimSpace(p))
 	if !filepath.IsAbs(p) {
@@ -29,7 +29,7 @@ func NormalizeLocal(p string) string {
 }
 
 // LocalKey is the comparison form of a local path: slash separators and,
-// on Windows, case-folded (spec §3.3: comparisons ignore case there).
+// on Windows, case-folded (spec §4.3: comparisons ignore case there).
 func LocalKey(p string) string {
 	s := filepath.ToSlash(filepath.Clean(p))
 	if IsWindows() {
@@ -49,6 +49,23 @@ func repoKey(p string) string {
 // RepoPathOf resolves an item's repo-relative path for a map root:
 // map-root scope prefixes the namespace; git-root scope uses the raw path.
 func RepoPathOf(item config.MapItem, mapRoot string) (string, error) {
+	clean, err := validateRepoRel(item)
+	if err != nil {
+		return "", err
+	}
+	if item.Scope == config.ScopeMapRoot {
+		clean = mapRoot + "/" + clean
+	}
+	if clean == ".gns/map" || strings.HasPrefix(clean, ".gns/map/") {
+		return "", fmt.Errorf("repo path overlaps reserved .gns/map: %q", item.Path)
+	}
+	return clean, nil
+}
+
+// validateRepoRel checks the item scope and its unprefixed repository path.
+// It deliberately does not require mapRoot, so pre-init config validation
+// does not need a fake namespace.
+func validateRepoRel(item config.MapItem) (string, error) {
 	if item.Scope != config.ScopeMapRoot && item.Scope != config.ScopeGitRoot {
 		return "", fmt.Errorf("invalid scope %q (want %q or %q)",
 			item.Scope, config.ScopeMapRoot, config.ScopeGitRoot)
@@ -69,17 +86,14 @@ func RepoPathOf(item config.MapItem, mapRoot string) (string, error) {
 			return "", fmt.Errorf("repo path is not portable to Windows: %q", part)
 		}
 	}
-	if item.Scope == config.ScopeMapRoot {
-		clean = mapRoot + "/" + clean
-	}
-	if clean == ".gns/map" || strings.HasPrefix(clean, ".gns/map/") {
+	if item.Scope == config.ScopeGitRoot && (clean == ".gns/map" || strings.HasPrefix(clean, ".gns/map/")) {
 		return "", fmt.Errorf("repo path overlaps reserved .gns/map: %q", item.Path)
 	}
 	return clean, nil
 }
 
 // ValidateItems checks both sides of the mapping list for duplicates and
-// mutual containment (spec §3.3). Returns all problems found.
+// mutual containment (spec §4.3). Returns all problems found.
 func ValidateItems(items []config.MapItem, mapRoot string) []error {
 	var errs []error
 	var localKeys, repoKeys []string
@@ -136,7 +150,7 @@ func ValidatePlacement(items []config.MapItem, gitRoot, mapRoot string) []error 
 }
 
 // containmentErrors reports pairs where one path contains another — nested
-// mappings would make copy direction ambiguous (spec §3.3).
+// mappings would make copy direction ambiguous (spec §4.3).
 func containmentErrors(keys []string, side string) []error {
 	sorted := append([]string(nil), keys...)
 	sort.Strings(sorted)

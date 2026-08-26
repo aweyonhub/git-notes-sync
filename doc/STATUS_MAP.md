@@ -1,0 +1,82 @@
+# GNS Map 开发状态
+
+> 面向 v0.1.6 的 map 实现状态。功能设计见 [git-notes-sync_map.md](./git-notes-sync_map.md)，用户操作见 [USAGE_MAP.md](./USAGE_MAP.md)。普通 sync 功能状态见 [STATUS.md](./STATUS.md)。
+
+---
+
+## 一、功能状态
+
+### 1.1 已完成
+
+| 模块 | 当前实现 | 状态 |
+|---|---|---|
+| 配置模型 | `[map]`、`[[map.items]]`、`git-root`/`map-root`/`mode`/`sync` | ✅ |
+| 命令入口 | `gns map`、`gns map-config`、短命令 `gnm` | ✅ |
+| worktree | 固定机器分支与目录；基于 git-root 当前 HEAD 初始化 | ✅ |
+| 映射模式 | `auto`、`link`、`copy`；Windows auto→copy，Linux/macOS auto→link | ✅ |
+| 配置操作 | add/remove/list/validate/save/load；初始化后增删立即生效 | ✅ |
+| 内容选择 | `gnm add/get` 支持文件、目录、`-A/--all` 和单层 `*` | ✅ |
+| 状态诊断 | 三状态、Git 状态、映射类型、copy 本机变化、推荐操作 | ✅ |
+| 同步链路 | pull → worktree merge → git-root fast-forward → push | ✅ |
+| 阻断恢复 | 普通 pull、force pull、备份 ref、人工 add/get/commit/push | ✅ |
+| 自动闸门 | 首次 push 创建 `.syncable`；明确人工边界时解除 | ✅ |
+| 调度复用 | `map.sync=true` 后复用现有 daemon/cron/系统定时任务 | ✅ |
+
+### 1.2 安全边界
+
+当前实现遵守以下核心约束：
+
+- 不对机器 worktree 使用 `reset --hard`；
+- link 模式不删除未确认属于当前映射的真实文件；
+- copy 模式使用临时文件和原子替换，并保留权限与 mtime；
+- 映射根新增、删除或类型变化方向不明确时阻断；
+- 只有确定需要人工重新选择内容或历史时才删除 `.syncable`；
+- git-root 无法 fast-forward 时停止，不在 git-root 再做一次内容合并；
+- add/remove 文件操作失败时恢复配置或映射，避免留下静默半完成状态；
+- `status` 在未配置、首次初始化和阻断状态下都给出下一步命令。
+
+## 二、代码结构
+
+| 位置 | 职责 |
+|---|---|
+| `internal/mapsync/model.go` | 映射模型、路径和包含关系校验 |
+| `internal/mapsync/paths.go` | app-data、状态目录、worktree、分支和备份 ref 命名 |
+| `internal/mapsync/configops.go` | map 配置编辑、校验及快照 save/load |
+| `internal/mapsync/fsops.go` | link/copy 文件操作、元数据与并发变化保护 |
+| `internal/mapsync/init.go` | worktree 初始化及映射建立/解除 |
+| `internal/mapsync/addget.go` | add/get/commit 选择流程 |
+| `internal/mapsync/engine.go` | push/sync 共享集成链路 |
+| `internal/mapsync/pull.go` | 普通与 force 阻断恢复 |
+| `internal/mapsync/status.go` | 状态事实和推荐命令 |
+| `internal/mapsync/state.go` | Env、`.syncable` 和 blocked state |
+| `internal/cli/mapcmd.go` | `gns map`、`gns map-config`、`gnm` CLI |
+
+## 三、测试覆盖
+
+### 3.1 已覆盖场景
+
+- init → add/get → commit → push → sync 完整流程；
+- 远端并发修改、worktree 合并冲突和恢复；
+- force pull 对齐远程，同时保持本机真实文件；
+- `.syncable` 首次确认、阻断解除和可重试错误保留；
+- link 模式生命周期和未受管理文件保护；
+- copy 模式 size/mtime/权限复制、目录删除及并发变化保护；
+- 配置 add/remove 失败回滚；
+- 通配符、精确路径、映射根删除确认；
+- 未配置状态及各种状态提示。
+
+### 3.2 测试特征
+
+mapsync 集成测试会创建真实 bare remote、clone 和 Git worktree，并执行真实 commit/merge/push。覆盖面较完整，但在 Windows 上运行时间明显高于纯单测；不为缩短几十秒引入共享仓库夹具，保持每个测试仓库独立。
+
+## 四、当前保留行为
+
+以下不是缺陷，当前不计划修改：
+
+- copy 模式只比较 size、mtime 和权限，不持久化 hash；同内容但 mtime 变化会保守地重新复制或要求重新 add；
+- `gnm status` 是用户主动触发的完整诊断，允许递归扫描大型映射目录；
+- 网络、认证、权限和普通 push rejected 默认保留 `.syncable`，等待下次同步重新判断；
+- pull 失败后通过 HEAD 与 upstream 的提交图确认是否真正分叉，不依赖 Git 错误文案；
+- map 不创建仓库、不选择固定主分支、不替用户决定远程或复杂 Git 历史；
+- map 不实现 watcher，也不单独实现 daemon 或定时任务。
+- `gnm status` 是显式执行的诊断命令，允许按映射查询 HEAD；普通同步链路不为此维护额外缓存。

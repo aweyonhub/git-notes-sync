@@ -5,7 +5,7 @@
 
 Go 实现，调用系统 Git，不重新实现 Git。详见 [doc/git-notes-sync.md](./doc/git-notes-sync.md)（规格与实现决策）。
 
-**📖 完整使用说明见 [doc/USAGE.md](./doc/USAGE.md)**（安装、命令、配置、定时调度、AI、冲突处理、FAQ）。
+**📖 普通 sync 使用说明见 [doc/USAGE.md](./doc/USAGE.md)**（安装、命令、配置、定时调度、AI、冲突处理、FAQ）。
 
 ## 安装
 
@@ -57,7 +57,7 @@ gns version
 
 ### map：把本机文件纳入 Git 仓库（短命令 `gnm`）
 
-`map` 通过映射把 dotfile、config、skill、脚本等本机文件统一纳入一个专用 git-root 仓库，跨机器同步而不改变文件的日常使用方式（软链接或增量复制）。设计见 [doc/git-notes-sync_map.md](./doc/git-notes-sync_map.md)。
+`map` 通过映射把 dotfile、config、skill、脚本等本机文件统一纳入一个专用 git-root 仓库，跨机器同步而不改变文件的日常使用方式（软链接或增量复制）。参见 [使用说明](./doc/USAGE_MAP.md)、[开发状态](./doc/STATUS_MAP.md) 和 [完整设计](./doc/git-notes-sync_map.md)。
 
 ```bash
 gnm config git-root <path>      # 指向集成仓库；map-root <name> 设置机器命名空间

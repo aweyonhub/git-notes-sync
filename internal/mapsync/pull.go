@@ -73,12 +73,17 @@ func Pull(env *Env, force bool) error {
 		}
 		env.logf("map %s: git-root force-aligned to upstream %s/%s", env.MapRoot, remote, branch)
 	} else {
+		entries, serr := g.Status()
+		if serr != nil {
+			return fmt.Errorf("map: inspect git-root: %w", serr)
+		}
+		if len(entries) > 0 {
+			return errors.New("map: git-root has uncommitted files; commit or clean it before pull")
+		}
 		diverged, err := pullFFOnly(g, env.Cfg.RetryAttempts)
 		if err != nil {
 			if diverged {
-				RemoveSyncable(env)
-				WriteBlocked(env, &BlockedState{Reason: "divergence"})
-				return errors.New("map: git-root diverged from upstream; use `gnm pull --force`")
+				return blockAndStop(env, &BlockedState{Reason: "divergence"}, errors.New("map: git-root diverged from upstream; use `gnm pull --force`"))
 			}
 			return fmt.Errorf("map: git-root pull: %w", err)
 		}
@@ -88,7 +93,9 @@ func Pull(env *Env, force bool) error {
 	if base == "" {
 		return errors.New("map: git-root has no commits")
 	}
-	RemoveSyncable(env)
+	if err := RemoveSyncable(env); err != nil {
+		return fmt.Errorf("map: disarm .syncable: %w", err)
+	}
 	// mixed reset moves HEAD+index only; working files and real files stay
 	if err := w.ResetMixed(base); err != nil {
 		return fmt.Errorf("map: worktree reset --mixed to %s: %w", short(base), err)

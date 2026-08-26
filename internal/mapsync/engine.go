@@ -83,12 +83,11 @@ func runChain(env *Env, auto bool) error {
 	diverged, err := pullFFOnly(g, env.Cfg.RetryAttempts)
 	if err != nil {
 		if diverged {
-			RemoveSyncable(env)
-			WriteBlocked(env, &BlockedState{
+			primary := fmt.Errorf("map: git-root diverged from upstream; run `gnm pull --force`, then add/get/commit/push")
+			return blockAndStop(env, &BlockedState{
 				Reason: "divergence",
 				Detail: fmt.Sprintf("git-root branch %s diverged from its upstream", branch),
-			})
-			return fmt.Errorf("map: git-root diverged from upstream; run `gnm pull --force`, then add/get/commit/push")
+			}, primary)
 		}
 		return fmt.Errorf("map: git-root pull: %w (.syncable kept)", err)
 	}
@@ -96,14 +95,13 @@ func runChain(env *Env, auto bool) error {
 	// step 3: mapping-root presence/type pre-check — delete-safety, not a
 	// Git conflict (§5.2).
 	if viol := rootViolations(env); viol != "" {
-		RemoveSyncable(env)
-		WriteBlocked(env, &BlockedState{Reason: "mapping-root", Detail: viol})
-		return fmt.Errorf("map: mapping root needs manual choice; .syncable removed\n  %s", viol)
+		primary := fmt.Errorf("map: mapping root needs manual choice; .syncable removed\n  %s", viol)
+		return blockAndStop(env, &BlockedState{Reason: "mapping-root", Detail: viol}, primary)
 	}
 
 	// step 4: one local→worktree pass. In copy mode it also collects the
 	// metadata used to guard the later deploy, avoiding separate TOCTOU scans.
-	baselines, err := convergeIntoWorktree(env)
+	baselines, err := convergeIntoWorktree(env, false)
 	if err != nil {
 		return classifySpecial(env, err)
 	}
@@ -126,17 +124,17 @@ func runChain(env *Env, auto bool) error {
 		unmerged, uerr := w.Unmerged()
 		if uerr == nil && len(unmerged) > 0 {
 			abortErr := w.MergeAbort()
-			RemoveSyncable(env)
-			WriteBlocked(env, &BlockedState{
+			primary := fmt.Errorf("map: merge conflict in %d file(s); run `gnm pull`, choose with `gnm add|get`, commit, then push", len(unmerged))
+			primary = blockAndStop(env, &BlockedState{
 				Reason:    "merge-conflict",
 				Detail:    "worktree merge git-root conflicted",
 				Conflicts: unmerged,
 				GitHead:   g.Head(),
-			})
+			}, primary)
 			if abortErr != nil {
-				return fmt.Errorf("map: merge conflict; merge --abort also failed: %v", abortErr)
+				return fmt.Errorf("%w; merge --abort also failed: %v", primary, abortErr)
 			}
-			return fmt.Errorf("map: merge conflict in %d file(s); run `gnm pull`, choose with `gnm add|get`, commit, then push", len(unmerged))
+			return primary
 		}
 		return fmt.Errorf("map: worktree merge %s: %w", branch, err)
 	}
@@ -147,16 +145,14 @@ func runChain(env *Env, auto bool) error {
 		if err := w.ResetMerge(preMerge); err != nil {
 			viol += fmt.Sprintf("; restore merge failed: %v", err)
 		}
-		RemoveSyncable(env)
-		WriteBlocked(env, &BlockedState{Reason: "mapping-root", Detail: viol})
-		return fmt.Errorf("map: mapping root diverged after merge; reverted merge\n  %s", viol)
+		primary := fmt.Errorf("map: mapping root diverged after merge; reverted merge\n  %s", viol)
+		return blockAndStop(env, &BlockedState{Reason: "mapping-root", Detail: viol}, primary)
 	}
 	if env.LinkMode() {
 		if dirty, err := wtHasChanges(w); err != nil {
 			return err
 		} else if dirty {
-			RemoveSyncable(env)
-			return errors.New("map: mapped files changed during merge; local content kept, review and push again")
+			return blockAndStop(env, &BlockedState{Reason: "mapping-root", Detail: "mapped files changed during merge"}, errors.New("map: mapped files changed during merge; local content kept, review and push again"))
 		}
 	}
 
@@ -186,21 +182,18 @@ func runChain(env *Env, auto bool) error {
 
 	// step 9: fast-forward git-root to the merged worktree HEAD
 	if err := g.MergeFFOnly(wtBranch); err != nil {
-		RemoveSyncable(env)
-		WriteBlocked(env, &BlockedState{Reason: "fastforward-failed", Detail: err.Error()})
-		return fmt.Errorf("map: git-root cannot fast-forward to %s: %v; run `gnm status`", wtBranch, shortErr(err))
+		primary := fmt.Errorf("map: git-root cannot fast-forward to %s: %v; run `gnm status`", wtBranch, shortErr(err))
+		return blockAndStop(env, &BlockedState{Reason: "fastforward-failed", Detail: err.Error()}, primary)
 	}
 
-	// step 10: push. A rejection keeps .syncable on purpose — the next
-	// round's pull --ff-only is what officially judges divergence (§7.3).
+	// step 10: every push failure keeps .syncable. The next round's
+	// pull --ff-only and commit-graph check officially judge divergence
+	// (§7.3), so push stderr wording does not affect state transitions.
 	err = retry.Do(env.Cfg.RetryAttempts, func() error {
 		return g.Push(remote, rbranch)
 	}, 2*time.Second, git.IsTransient)
 	if err != nil {
-		if isPushRejected(err) {
-			return fmt.Errorf("map: git-root push rejected (remote moved); .syncable kept — next sync re-judges: %w", err)
-		}
-		return fmt.Errorf("map: git-root push: %w", err)
+		return fmt.Errorf("map: git-root push failed; .syncable kept — retry or run `gnm status`: %w", err)
 	}
 
 	// step 11: success — arm/keep the gate and clear stale block info
@@ -275,18 +268,23 @@ func wtTracks(env *Env, wt *git.Runner, item config.MapItem) bool {
 // convergeIntoWorktree copies local content up in copy mode (link mode needs
 // nothing: the worktree file IS the local file). Callers run the root checks
 // first, so every mapping here is consistent or consistently empty.
-func convergeIntoWorktree(env *Env) (map[int]copyBaseline, error) {
+func convergeIntoWorktree(env *Env, confirmMissing bool) (map[int]copyBaseline, error) {
 	if env.LinkMode() {
 		return nil, nil
 	}
 	baselines := make(map[int]copyBaseline, len(env.Cfg.Map.Items))
 	for i, it := range env.Cfg.Map.Items {
 		localAbs := NormalizeLocal(it.LocalPath)
-		if kindOf(localAbs) == kMissing {
-			continue // root violation would have caught real divergence
-		}
 		wtPath, err := env.worktreePathOf(it)
 		if err != nil {
+			continue
+		}
+		if kindOf(localAbs) == kMissing {
+			if confirmMissing && kindOf(wtPath) != kMissing {
+				if err := os.RemoveAll(wtPath); err != nil {
+					return nil, err
+				}
+			}
 			continue
 		}
 		baseline, err := syncTreeTracked(localAbs, wtPath)
@@ -311,7 +309,16 @@ func deployFromWorktree(env *Env, baselines map[int]copyBaseline) error {
 		wk := kindOf(wtPath)
 		if env.LinkMode() {
 			if wk == kMissing {
-				_ = os.RemoveAll(localAbs) // link with no target: remove the dead link
+				lk := kindOf(localAbs)
+				if lk == kMissing {
+					continue
+				}
+				if lk != kSymlink || !linkPointsTo(localAbs, wtPath) {
+					return fmt.Errorf("refusing to remove unmanaged local path %s", localAbs)
+				}
+				if err := os.Remove(localAbs); err != nil {
+					return err
+				}
 				continue
 			}
 			if err := EnsureSymlink(localAbs, wtPath); err != nil {
@@ -341,9 +348,7 @@ func classifySpecial(env *Env, err error) error {
 	var sfe *SpecialFileError
 	var cce *ConcurrentChangeError
 	if errors.As(err, &sfe) || errors.As(err, &cce) {
-		RemoveSyncable(env)
-		WriteBlocked(env, &BlockedState{Reason: "special-file", Detail: sfe.Error()})
-		return fmt.Errorf("%w; .syncable removed", err)
+		return blockAndStop(env, &BlockedState{Reason: "special-file", Detail: err.Error()}, fmt.Errorf("%w; .syncable removed", err))
 	}
 	return err
 }
@@ -373,32 +378,32 @@ func commitWorktree(env *Env, msg string) error {
 	return nil
 }
 
-// pullFFOnly wraps pull --ff-only and classifies a failure as history
-// divergence (non-fast-forward family) versus transient trouble.
+// pullFFOnly wraps pull --ff-only. On failure it classifies history from the
+// commit graph instead of parsing localized/version-dependent Git stderr.
+// An unavailable/stale upstream check is treated as an ordinary retryable
+// failure; only a confirmed two-sided graph split blocks automatic sync.
 func pullFFOnly(g *git.Runner, attempts int) (diverged bool, err error) {
 	e := retry.Do(attempts, func() error { return g.PullFFOnly() }, 2*time.Second, git.IsTransient)
 	if e == nil {
 		return false, nil
 	}
-	s := strings.ToLower(e.Error())
-	for _, p := range []string{"fast-forward", "fetch first", "[rejected]", "non-fast-forward"} {
-		if strings.Contains(s, p) {
-			return true, e
-		}
+	diverged, inspectErr := upstreamDiverged(g)
+	if inspectErr != nil {
+		return false, e
 	}
-	return false, e
+	return diverged, e
 }
 
-// isPushRejected mirrors the sync engine's rejection detection: remote moved
-// vs network/auth trouble.
-func isPushRejected(err error) bool {
-	s := strings.ToLower(err.Error())
-	for _, p := range []string{"[rejected]", "non-fast-forward", "fetch first", "stale info"} {
-		if strings.Contains(s, p) {
-			return true
-		}
+func upstreamDiverged(g *git.Runner) (bool, error) {
+	out, err := g.Out("rev-list", "--left-right", "--count", "HEAD...@{u}")
+	if err != nil {
+		return false, err
 	}
-	return false
+	var ahead, behind int
+	if n, err := fmt.Sscanf(out, "%d %d", &ahead, &behind); err != nil || n != 2 {
+		return false, fmt.Errorf("parse ahead/behind %q", out)
+	}
+	return ahead > 0 && behind > 0, nil
 }
 
 func shortErr(err error) string {

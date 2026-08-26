@@ -11,6 +11,47 @@ import (
 	"github.com/aweyonhub/git-notes-sync/internal/git"
 )
 
+// StatusUninitialized renders the useful part of status before the map
+// environment can be resolved. This keeps the first-run command actionable.
+func StatusUninitialized(cfg *config.Config) string {
+	mapRoot := cfg.Map.MapRoot
+	if mapRoot == "" {
+		mapRoot = "<not configured>"
+	}
+	gitRoot := cfg.Map.GitRoot
+	if gitRoot == "" {
+		gitRoot = "<not configured>"
+	}
+	mode := cfg.Map.Mode
+	if mode == "" {
+		mode = "auto"
+	}
+	var b strings.Builder
+	fmt.Fprintln(&b, "state:      NOT_INITIALIZED")
+	fmt.Fprintf(&b, "map-root:   %s\n", mapRoot)
+	fmt.Fprintf(&b, "mode:       %s\n", mode)
+	fmt.Fprintf(&b, "git-root:   %s\n", gitRoot)
+	fmt.Fprintln(&b, "worktree:   (not created)")
+	fmt.Fprintln(&b, ".syncable:  false")
+	fmt.Fprintln(&b, "\nmappings:")
+	if len(cfg.Map.Items) == 0 {
+		fmt.Fprintln(&b, "  (none configured)")
+	} else {
+		fmt.Fprintf(&b, "  %d configured mapping(s) (run `gnm config validate`)\n", len(cfg.Map.Items))
+	}
+	fmt.Fprintln(&b, "\nNext:")
+	if cfg.Map.GitRoot == "" {
+		fmt.Fprintln(&b, "  gnm config git-root <path>")
+	}
+	if cfg.Map.MapRoot == "" {
+		fmt.Fprintln(&b, "  gnm config map-root <name>")
+	}
+	if cfg.Map.GitRoot != "" && cfg.Map.MapRoot != "" {
+		fmt.Fprintln(&b, "  gnm init")
+	}
+	return b.String()
+}
+
 // Status renders state, facts and actionable next commands.
 func Status(env *Env) (string, error) {
 	var b strings.Builder
@@ -251,7 +292,10 @@ func nextSteps(env *Env, state string, blocked *BlockedState, dirty bool, mappin
 
 func quoteCLI(path string) string {
 	if IsWindows() {
-		return "'" + strings.ReplaceAll(path, "'", "''") + "'"
+		// Double quotes are accepted by both cmd.exe and PowerShell. Windows
+		// paths cannot contain a literal double quote, so no extra escaping is
+		// needed here.
+		return `"` + path + `"`
 	}
 	return "'" + strings.ReplaceAll(path, "'", `'"'"'`) + "'"
 }

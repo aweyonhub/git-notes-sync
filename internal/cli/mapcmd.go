@@ -110,7 +110,15 @@ func cmdMap(args []string) error {
 		if err := fs.Parse(normalizeArgs(rest, map[string]bool{"c": true})); err != nil {
 			return err
 		}
-		env, err := loadMapEnv(cfgPath)
+		cfg, p, err := loadUserConfig(cfgPath)
+		if err != nil {
+			return err
+		}
+		if cfg.Map.GitRoot == "" || cfg.Map.MapRoot == "" {
+			fmt.Print(mapsync.StatusUninitialized(cfg))
+			return nil
+		}
+		env, err := mapsync.ResolveEnv(cfg, p, mapLogf)
 		if err != nil {
 			return err
 		}
@@ -129,6 +137,9 @@ func cmdMap(args []string) error {
 		fs.StringVar(&cfgPath, "c", "", "config file path")
 		if err := fs.Parse(normalizeArgs(rest, map[string]bool{"c": true})); err != nil {
 			return err
+		}
+		if *all && len(fs.Args()) > 0 {
+			return errors.New("usage: gnm " + sub + " <path|pattern...> | -A")
 		}
 		env, err := loadMapEnv(cfgPath)
 		if err != nil {
@@ -356,7 +367,7 @@ func cmdMapConfig(args []string) error {
 			return mapsync.SaveSnapshot(&snapEnv)
 		}
 		if !mapsync.IsInitialized(env) {
-			fmt.Println("worktree not initialized yet; the snapshot will be written by `gnm init`")
+			fmt.Println("worktree not initialized; no snapshot written now — `gnm init` will create the initial snapshot")
 			return nil
 		}
 		return mapsync.SaveSnapshot(env)

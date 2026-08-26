@@ -183,6 +183,34 @@ func TestInitPublishesLocalThenPushSyncRoundtrip(t *testing.T) {
 	}
 }
 
+func TestAddAllConfirmsMissingLocalRootDeletion(t *testing.T) {
+	env, _, local, _ := setupMapped(t, "")
+	if err := os.Remove(local); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(env, nil, true); err != nil {
+		t.Fatalf("add -A: %v", err)
+	}
+	if _, err := os.Lstat(mappedWtFile(env)); !os.IsNotExist(err) {
+		t.Fatalf("add -A did not remove worktree content: %v", err)
+	}
+	staged, err := env.wtRunner().HasStaged()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !staged {
+		t.Fatal("add -A did not stage the confirmed deletion")
+	}
+}
+
+func TestPullRejectsDirtyGitRoot(t *testing.T) {
+	env, _, _, _ := setupMapped(t, "")
+	writeFile(t, filepath.Join(env.GitRoot, "uncommitted.txt"), "dirty\n")
+	if err := Pull(env, false); err == nil || !strings.Contains(err.Error(), "uncommitted") {
+		t.Fatalf("dirty git-root pull error = %v", err)
+	}
+}
+
 func TestGetDirectoryRemovesFilesAbsentFromHead(t *testing.T) {
 	env, _, home := newTestEnv(t)
 	localDir := filepath.Join(home, "mapped")
@@ -400,6 +428,13 @@ func TestPullForceAdoptsRemoteBaseline(t *testing.T) {
 	gitCmd(t, peer, "add", "-A")
 	gitCmd(t, peer, "commit", "-m", "y change")
 	gitCmd(t, peer, "push")
+
+	// The failed ff-only pull is classified from the commit graph, not from
+	// Git's localized stderr: both HEAD and upstream now have unique commits.
+	diverged, err := pullFFOnly(env.gitRunner(), 1)
+	if err == nil || !diverged {
+		t.Fatalf("two-sided history split classified as diverged=%v err=%v", diverged, err)
+	}
 
 	if err := Pull(env, true); err != nil {
 		t.Fatalf("pull --force: %v", err)

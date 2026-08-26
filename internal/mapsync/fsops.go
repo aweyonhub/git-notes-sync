@@ -569,7 +569,9 @@ func walkNodes(root string) ([]string, error) {
 				}
 			}
 		default: // file or symlink — symlinks are nodes, never descended into
-			out = append(out, rel)
+			if rel != "" {
+				out = append(out, rel)
+			}
 		}
 		return nil
 	}
@@ -578,9 +580,6 @@ func walkNodes(root string) ([]string, error) {
 	}
 	if err := walk(root, ""); err != nil {
 		return nil, err
-	}
-	if len(out) > 0 && out[0] == "" {
-		out = out[1:] // drop the root itself when it was recorded
 	}
 	return out, nil
 }
