@@ -22,12 +22,12 @@
     "README.md"
   ],
   "optionalDependencies": {
-    "@aweyonhub/git-notes-sync-linux-x64": "0.1.4",
-    "@aweyonhub/git-notes-sync-linux-arm64": "0.1.4",
-    "@aweyonhub/git-notes-sync-darwin-x64": "0.1.4",
-    "@aweyonhub/git-notes-sync-darwin-arm64": "0.1.4",
-    "@aweyonhub/git-notes-sync-win32-x64": "0.1.4",
-    "@aweyonhub/git-notes-sync-win32-arm64": "0.1.4"
+    "@aweyonhub/git-notes-sync-linux-x64": "0.1.5",
+    "@aweyonhub/git-notes-sync-linux-arm64": "0.1.5",
+    "@aweyonhub/git-notes-sync-darwin-x64": "0.1.5",
+    "@aweyonhub/git-notes-sync-darwin-arm64": "0.1.5",
+    "@aweyonhub/git-notes-sync-win32-x64": "0.1.5",
+    "@aweyonhub/git-notes-sync-win32-arm64": "0.1.5"
   },
   "engines": {
     "node": ">=16",

@@ -148,6 +148,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          generate_release_notes: true
       - name: Assemble npm platform sub-packages
         run: scripts/assemble-platform-packages.sh "${GITHUB_REF_NAME#v}" dist
       - name: Publish sub-packages to npm
