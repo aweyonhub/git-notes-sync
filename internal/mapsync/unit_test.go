@@ -208,6 +208,61 @@ func TestSyncTreePreservesExecBit(t *testing.T) {
 	if err != nil || fi.Mode()&0o111 == 0 {
 		t.Fatal("executable bit lost in copy")
 	}
+
+	// Permission-only changes are part of copy freshness even when size and
+	// mtime still match.
+	mtime := fi.ModTime()
+	if err := os.Chmod(src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(src, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncTree(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	fi, err = os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o644 {
+		t.Fatalf("permission-only change not copied: mode=%v", fi.Mode().Perm())
+	}
+}
+
+func TestSyncTreePreservesDirectoryMetadata(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix directory permission bits")
+	}
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	dst := filepath.Join(tmp, "dst")
+	if err := os.MkdirAll(src, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeF(t, filepath.Join(src, "item"), "value")
+	if err := os.Chmod(src, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	wantTime := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(src, wantTime, wantTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncTree(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	si, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	di, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if di.Mode().Perm() != si.Mode().Perm() || !di.ModTime().Equal(si.ModTime()) {
+		t.Fatalf("directory metadata differs: src=%v/%v dst=%v/%v",
+			si.Mode().Perm(), si.ModTime(), di.Mode().Perm(), di.ModTime())
+	}
 }
 
 func TestTrackedCopyBlocksConcurrentLocalChange(t *testing.T) {

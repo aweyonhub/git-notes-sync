@@ -228,6 +228,16 @@ func syncTree(srcRoot, dstRoot, rel string, baseline, guard copyBaseline) error 
 				}
 			}
 		}
+		// Directories carry meaningful permissions too (for example, private
+		// configuration directories). Apply their metadata after walking so
+		// child creation and deletion do not immediately change the mtime.
+		if err := os.Chmod(dstRoot, si.Mode().Perm()); err != nil {
+			return err
+		}
+		mt := si.ModTime()
+		if err := os.Chtimes(dstRoot, mt, mt); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -236,6 +246,11 @@ func makeStamp(path string, kind entryKind, info os.FileInfo) (nodeStamp, error)
 	s := nodeStamp{Kind: kind}
 	if info != nil && kind == kFile {
 		s.Size, s.Mtime, s.Mode = info.Size(), info.ModTime().UnixNano(), info.Mode().Perm()
+	}
+	if info != nil && kind == kDir {
+		// Directory mtime changes as children are edited and is not a stable
+		// content signal. Permission bits are meaningful and must still match.
+		s.Mode = info.Mode().Perm()
 	}
 	if kind == kSymlink {
 		target, err := os.Readlink(path)
@@ -308,6 +323,69 @@ func checkSubtree(root, rel string, baseline copyBaseline) error {
 	return nil
 }
 
+// snapshotMetadata is intentionally used by the explicit status command.
+// Automatic synchronization obtains the same metadata during its required
+// copy traversal and does not pay for these extra diagnostic walks.
+func snapshotMetadata(root string) (copyBaseline, error) {
+	out := copyBaseline{}
+	var walk func(string, string) error
+	walk = func(path, rel string) error {
+		kind, info, err := inspect(path)
+		if err != nil {
+			return err
+		}
+		if kind == kOther {
+			return &SpecialFileError{path}
+		}
+		stamp, err := makeStamp(path, kind, info)
+		if err != nil {
+			return err
+		}
+		out[rel] = stamp
+		if kind != kDir {
+			return nil
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			childRel := entry.Name()
+			if rel != "" {
+				childRel = rel + "/" + entry.Name()
+			}
+			if err := walk(filepath.Join(path, entry.Name()), childRel); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(root, ""); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func treesSameMetadata(a, b string) (bool, error) {
+	as, err := snapshotMetadata(a)
+	if err != nil {
+		return false, err
+	}
+	bs, err := snapshotMetadata(b)
+	if err != nil {
+		return false, err
+	}
+	if len(as) != len(bs) {
+		return false, nil
+	}
+	for path, left := range as {
+		if right, ok := bs[path]; !ok || right != left {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // copyFileIfNeeded copies via a temp file + atomic rename, preserving the
 // source permission bits (executable bit included) and mtime.
 func copyFileIfNeeded(src, dst string, si, di os.FileInfo) error {
@@ -334,6 +412,10 @@ func copyFileIfNeeded(src, dst string, si, di os.FileInfo) error {
 		cleanup()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
 		return err
@@ -347,8 +429,19 @@ func copyFileIfNeeded(src, dst string, si, di os.FileInfo) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
-	// os.Rename replaces an existing destination on every supported platform
+	// Windows can reject replacement of a read-only destination. Temporarily
+	// make that file writable and retry, restoring it if replacement still
+	// fails. The temp file already carries the source permissions.
 	if err := os.Rename(tmpName, dst); err != nil {
+		if di != nil && di.Mode().IsRegular() {
+			oldMode := di.Mode().Perm()
+			if chmodErr := os.Chmod(dst, oldMode|0o200); chmodErr == nil {
+				if retryErr := os.Rename(tmpName, dst); retryErr == nil {
+					return nil
+				}
+				_ = os.Chmod(dst, oldMode)
+			}
+		}
 		_ = os.Remove(tmpName)
 		return err
 	}

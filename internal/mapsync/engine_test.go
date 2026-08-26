@@ -437,13 +437,13 @@ func TestPullForceAdoptsRemoteBaseline(t *testing.T) {
 }
 
 func TestStatusRendersStatesAndHints(t *testing.T) {
-	env, _, _, _ := setupMapped(t, "")
+	env, _, local, _ := setupMapped(t, "")
 
 	out, err := Status(env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"MANUAL_REQUIRED", "gnm add", "gnm push"} {
+	for _, want := range []string{"MANUAL_REQUIRED", "staged=", "unstaged=", "untracked=", "HEAD=missing", "gnm add", "gnm push"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status missing %q:\n%s", want, out)
 		}
@@ -453,8 +453,21 @@ func TestStatusRendersStatesAndHints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "SYNCABLE") {
-		t.Fatalf("status missing SYNCABLE:\n%s", out)
+	for _, want := range []string{"SYNCABLE", "HEAD=file"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status missing %q:\n%s", want, out)
+		}
+	}
+
+	writeFile(t, local, "changed outside the worktree\n")
+	out, err = Status(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"local-dirty=1", "Next: gnm sync"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("copy status missing %q after local edit:\n%s", want, out)
+		}
 	}
 }
 
