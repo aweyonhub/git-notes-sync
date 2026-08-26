@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
+// NOTE: this argv mapping duplicates cmd/gns/main.go expandGnmAlias and
+// packages/meta/bin/gnm.js - keep the three in sync.
+
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');

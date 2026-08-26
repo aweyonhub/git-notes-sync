@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 
 	"github.com/aweyonhub/git-notes-sync/internal/config"
@@ -151,13 +150,43 @@ func ValidatePlacement(items []config.MapItem, gitRoot, mapRoot string) []error 
 
 // containmentErrors reports pairs where one path contains another — nested
 // mappings would make copy direction ambiguous (spec §4.3).
+//
+// Detection enumerates each key's "/"-prefix ancestors and probes the set.
+// Sorted-adjacency comparison is NOT sufficient: a sibling like `parent.txt`
+// sorts between `parent` and `parent/sub` ('.' < '/'), hiding the pair
+// (verified: that exact input passed the old implementation).
 func containmentErrors(keys []string, side string) []error {
-	sorted := append([]string(nil), keys...)
-	sort.Strings(sorted)
+	counts := make(map[string]int, len(keys))
+	inSet := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		counts[k]++
+		inSet[k] = struct{}{}
+	}
 	var errs []error
-	for i := 1; i < len(sorted); i++ {
-		if within(sorted[i], sorted[i-1]) {
-			errs = append(errs, fmt.Errorf("%s paths must not nest: %s contains %s", side, sorted[i-1], sorted[i]))
+	reported := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		if _, dup := reported[k]; dup {
+			continue
+		}
+		if counts[k] > 1 {
+			// exact repeats: the old sorted-adjacency form caught these via
+			// within(x, x); keep them errors now that detection changed
+			errs = append(errs, fmt.Errorf("%s paths must not repeat: %s", side, k))
+			reported[k] = struct{}{}
+			continue
+		}
+		for p := k; ; {
+			i := strings.LastIndexByte(p, '/')
+			if i < 0 {
+				break
+			}
+			p = p[:i]
+			if _, ok := inSet[p]; !ok {
+				continue
+			}
+			errs = append(errs, fmt.Errorf("%s paths must not nest: %s contains %s", side, p, k))
+			reported[k] = struct{}{}
+			break
 		}
 	}
 	return errs

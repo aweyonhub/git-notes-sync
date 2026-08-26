@@ -23,7 +23,14 @@ func TestGlobRegexp(t *testing.T) {
 		{"/h/.pi/*", "/h/.pi/.hidden", true}, // dotfiles match
 		{"/h/.pi/*", "/h/.pi/a/b", false},    // never crosses a separator
 		{"/h/.pi/*/x", "/h/.pi/sub/x", true}, // star mid-path
-		{"/h/f.txt", "/h/f.txt", true},       // literal
+		// embedded stars within one segment (spec §5.1 "包含 * 的路径模式")
+		{"/h/.pi/*.md", "/h/.pi/x.md", true},
+		{"/h/.pi/*.md", "/h/.pi/x.txt", false},
+		{"/h/.pi/*.md", "/h/.pi/sub/x.md", false}, // still never crosses "/"
+		{"/h/foo*", "/h/foobar", true},
+		{"/h/foo*", "/h/foo", true}, // embedded star may match empty
+		{"/h/foo*", "/h/fo", false},
+		{"/h/f.txt", "/h/f.txt", true}, // literal
 		{"/h/f.txt", "/h/g.txt", false},
 	}
 	for _, c := range cases {
@@ -42,6 +49,20 @@ func TestCollapseDescendants(t *testing.T) {
 	want := []string{"a", "z"} // "a" covers everything under it
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("collapseDescendants = %v, want %v", got, want)
+	}
+}
+
+// TestContainmentErrorsInterleavedSibling pins the prefix-ancestor fix: a
+// sibling like parent.txt sorts between parent and parent/sub ('.' < '/'),
+// which hid the nested pair from sorted-adjacency comparison.
+func TestContainmentErrorsInterleavedSibling(t *testing.T) {
+	keys := []string{
+		LocalKey(`/u/parent`),
+		LocalKey(`/u/parent/sub`),
+		LocalKey(`/u/parent.txt`),
+	}
+	if n := len(containmentErrors(keys, "local")); n == 0 {
+		t.Fatal("interleaved sibling let a nested pair pass")
 	}
 }
 

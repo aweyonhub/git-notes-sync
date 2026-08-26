@@ -35,6 +35,8 @@ make cross          # 交叉编译全部平台到 dist/
 make test           # 集成测试（需要系统 git）
 ```
 
+> 手动构建只产生 `gns`。需要 `gnm` 短命令时，把同一二进制复制或硬链接为 `gnm` 即可（程序按 argv[0] 识别）；npm 安装方式则自带 `gnm` 入口。
+
 ## 使用
 
 ```bash

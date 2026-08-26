@@ -78,7 +78,12 @@ func (r *Runner) run(args ...string) (string, string, error) {
 		ctx, cancel = context.WithTimeout(ctx, r.Timeout)
 		defer cancel()
 	}
-	cmd := exec.CommandContext(ctx, "git", args...)
+	// core.quotepath=off keeps path output raw on every command: the git
+	// default (true) escapes non-ASCII names to `"\344..."` octal blobs,
+	// which would corrupt anything downstream that matches or stores paths
+	// against real filesystem names (CJK notes repos are a primary use).
+	full := append([]string{"-c", "core.quotepath=off"}, args...)
+	cmd := exec.CommandContext(ctx, "git", full...)
 	cmd.Dir = r.Dir
 	if len(r.Env) > 0 {
 		cmd.Env = append(os.Environ(), r.Env...)
@@ -259,20 +264,21 @@ func (r *Runner) Status() ([]Entry, error) {
 	return entries, nil
 }
 
-// Unmerged returns paths currently in conflict (stages 1/2/3).
+// Unmerged returns paths currently in conflict (stages 1/2/3). -z keeps
+// raw names under default core.quotepath=true (CJK etc).
 func (r *Runner) Unmerged() ([]string, error) {
-	out, err := r.Out("ls-files", "-u")
+	out, err := r.Out("ls-files", "-u", "-z")
 	if err != nil {
 		return nil, err
 	}
 	seen := map[string]bool{}
 	var paths []string
-	for _, ln := range strings.Split(out, "\n") {
-		tab := strings.IndexByte(ln, '\t')
+	for _, entry := range strings.Split(out, "\x00") {
+		tab := strings.IndexByte(entry, '\t')
 		if tab < 0 {
 			continue
 		}
-		p := ln[tab+1:]
+		p := entry[tab+1:]
 		if !seen[p] {
 			seen[p] = true
 			paths = append(paths, p)
@@ -378,7 +384,8 @@ func (r *Runner) CheckoutTheirs(path string) error {
 // MarkerFiles returns tracked files containing conflict markers
 // (`<<<<<<< ` / `>>>>>>> ` lines). Empty when none.
 func (r *Runner) MarkerFiles() ([]string, error) {
-	out, _, err := r.run("grep", "-l", "-e", "^<<<<<<< ", "-e", "^>>>>>>> ", "--", ":/")
+	// -z keeps raw paths under default core.quotepath=true (CJK etc)
+	out, _, err := r.run("grep", "-l", "-z", "-e", "^<<<<<<< ", "-e", "^>>>>>>> ", "--", ":/")
 	if err != nil {
 		// git grep exits 1 when nothing matches
 		if ce, ok := err.(*exec.ExitError); ok && ce.ExitCode() == 1 {
@@ -387,7 +394,7 @@ func (r *Runner) MarkerFiles() ([]string, error) {
 		return nil, err
 	}
 	var files []string
-	for _, ln := range strings.Split(out, "\n") {
+	for _, ln := range strings.Split(out, "\x00") {
 		if ln != "" {
 			files = append(files, ln)
 		}
@@ -508,8 +515,12 @@ func (r *Runner) DeleteBranch(branch string) error {
 
 // LsTreeHead lists file paths under sub (repo-relative, "" = whole tree)
 // from HEAD. Empty when the path has no tracked files.
+//
+// -z keeps names raw: without it git quotes non-ASCII (`"\344\270\255..."`)
+// and names containing quotes under default core.quotepath=true, which
+// would break matching on stock environments (CI runners included).
 func (r *Runner) LsTreeHead(sub string) ([]string, error) {
-	args := []string{"ls-tree", "-r", "--name-only", "HEAD"}
+	args := []string{"ls-tree", "-r", "--name-only", "-z", "HEAD"}
 	if sub != "" {
 		args = append(args, "--", sub)
 	}
@@ -518,7 +529,7 @@ func (r *Runner) LsTreeHead(sub string) ([]string, error) {
 		return nil, err
 	}
 	var paths []string
-	for _, ln := range strings.Split(out, "\n") {
+	for _, ln := range strings.Split(out, "\x00") {
 		if ln != "" {
 			paths = append(paths, ln)
 		}

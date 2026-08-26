@@ -192,23 +192,46 @@ func removeMappingItem(env *Env, it config.MapItem) error {
 	}
 	lk, wk := kindOf(localAbs), kindOf(wtPath)
 
+	// Link mode stashes the managed link instead of deleting it: if the
+	// copy-back below fails mid-way, the original link is restored and no
+	// half-materialized state is left behind (spec §4.5 safety).
+	stashed := ""
+	restore := func() {
+		if stashed != "" {
+			_ = os.RemoveAll(localAbs) // drop partial copy remnants first
+			_ = os.Rename(stashed, localAbs)
+			stashed = ""
+		}
+	}
+
 	if lk == kSymlink && env.LinkMode() {
 		if !linkPointsTo(localAbs, wtPath) {
 			return fmt.Errorf("refusing to remove unmanaged symlink: %s", localAbs)
 		}
-		if err := os.Remove(localAbs); err != nil {
-			return err
+		aside := localAbs + ".gns-unmap-bak"
+		_ = os.Remove(aside)
+		if err := os.Rename(localAbs, aside); err != nil {
+			return fmt.Errorf("stash managed link: %w", err)
 		}
+		stashed = aside
 		lk = kMissing
 	}
 	if lk == kMissing && wk != kMissing && wk != kOther {
 		if err := ensureParent(localAbs); err != nil {
+			restore()
 			return err
 		}
 		// copy-back serves both scopes: map-root scope deletes its copy next,
 		// git-root scope must keep the shared original anyway
 		if err := SyncTree(wtPath, localAbs); err != nil {
+			restore()
 			return err
+		}
+	}
+	if stashed != "" {
+		if err := os.Remove(stashed); err != nil {
+			// content is already materialized at localAbs — only clutter left
+			return fmt.Errorf("mapping applied; remove stashed link %s manually: %w", stashed, err)
 		}
 	}
 	if it.Scope == config.ScopeMapRoot && wk != kMissing {

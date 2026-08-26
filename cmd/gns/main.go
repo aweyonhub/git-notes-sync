@@ -62,6 +62,8 @@ func main() {
 }
 
 // expandGnmAlias translates an invocation as `gnm` (via argv[0]) into the
+// long form. NOTE: npm/bin/gnm.js and packages/meta/bin/gnm.js duplicate
+// this mapping for the npm path - keep all three in sync.
 // long form, so one binary serves both entries (doc/git-notes-sync_map.md
 // §6.1): gnm X… → gns map X…; gnm config X… → gns map-config X…
 func expandGnmAlias(argv0 string, args []string) []string {

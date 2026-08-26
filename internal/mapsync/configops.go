@@ -44,8 +44,14 @@ func ValidateReport(cfg *config.Config) []error {
 	var errs []error
 	if cfg.Map.GitRoot == "" {
 		errs = append(errs, errors.New("map.git_root is not set"))
-	} else if st, err := os.Stat(NormalizeLocal(cfg.Map.GitRoot)); err != nil || !st.IsDir() {
-		errs = append(errs, fmt.Errorf("map.git_root does not exist or is not a directory: %s", cfg.Map.GitRoot))
+	} else {
+		gr := NormalizeLocal(cfg.Map.GitRoot)
+		st, err := os.Stat(gr)
+		if err != nil || !st.IsDir() {
+			errs = append(errs, fmt.Errorf("map.git_root does not exist or is not a directory: %s", cfg.Map.GitRoot))
+		} else if !newRunner(gr, cfg).IsRepo() {
+			errs = append(errs, fmt.Errorf("map.git_root is not a Git repository: %s", cfg.Map.GitRoot))
+		}
 	}
 	if err := ValidMapRoot(cfg.Map.MapRoot); err != nil {
 		errs = append(errs, fmt.Errorf("map.map_root: %v", err))

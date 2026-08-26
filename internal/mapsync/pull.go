@@ -1,6 +1,7 @@
 // pull.go: the manual recovery entry after a block (spec §8.1). It moves the
 // machine onto a new git-root baseline with reset --mixed — worktree files
-// and local real files are never touched.
+// and local real files are never touched. The gate is disarmed before any
+// history movement; a later `gnm push` re-arms after resolution (§8.2).
 package mapsync
 
 import (
@@ -20,7 +21,11 @@ import (
 //	                 own commits (their content survives in the worktree and
 //	                 in the real files as unstaged differences).
 func Pull(env *Env, force bool) error {
-	if !IsInitialized(env) {
+	initd, ierr := IsInitialized(env)
+	if ierr != nil {
+		return fmt.Errorf("map: inspect worktree: %w", ierr)
+	}
+	if !initd {
 		return errors.New("map: not initialized; run `gnm init` first")
 	}
 	g := env.gitRunner()
@@ -43,14 +48,30 @@ func Pull(env *Env, force bool) error {
 		return errors.New("map: git-root is in detached HEAD; check out a branch first")
 	}
 
+	// An interrupted merge/rebase must be resolved by hand first: moving the
+	// baseline underneath it would silently discard the user's state.
+	if op, err := g.MergeInProgress(); err != nil {
+		return fmt.Errorf("map: inspect git-root: %w", err)
+	} else if op != "" {
+		return fmt.Errorf("map: git-root has an in-progress %s; finish or abort it first", op)
+	}
+	if op, err := w.MergeInProgress(); err != nil {
+		return fmt.Errorf("map: inspect worktree: %w", err)
+	} else if op != "" {
+		return fmt.Errorf("map: worktree has an in-progress %s; finish or abort it first", op)
+	}
+
 	oldWt := w.Head()
 	if oldWt != "" {
 		// keep the pre-reset machine branch recoverable (spec §9.5)
 		g.UpdateRefBestEffort(BackupRef(env.MapRoot), oldWt)
 	}
 	oldRoot := g.Head()
-	if oldRoot != "" {
-		g.UpdateRefBestEffort(GitRootBackupRef(env.MapRoot), oldRoot)
+
+	// Disarm the gate BEFORE any history movement: this command enters the
+	// recovery flow, and a later `gnm push` re-arms after resolution (§8.2).
+	if err := RemoveSyncable(env); err != nil {
+		return fmt.Errorf("map: disarm .syncable: %w", err)
 	}
 
 	if force {
@@ -66,6 +87,13 @@ func Pull(env *Env, force bool) error {
 		upHash, uerr := g.Out("rev-parse", "@{u}")
 		if uerr != nil {
 			return fmt.Errorf("map: resolve upstream: %w", uerr)
+		}
+		if oldRoot != "" {
+			// Destroying git-root history demands a guaranteed escape hatch,
+			// not a best-effort one (spec §9.5).
+			if _, err := g.Out("update-ref", GitRootBackupRef(env.MapRoot), oldRoot); err != nil {
+				return fmt.Errorf("map: write git-root backup ref: %w", err)
+			}
 		}
 		// --force resets ONLY the dedicated git-root; never the worktree (§9.4)
 		if err := g.ResetHard(upHash); err != nil {
@@ -83,7 +111,8 @@ func Pull(env *Env, force bool) error {
 		diverged, err := pullFFOnly(g, env.Cfg.RetryAttempts)
 		if err != nil {
 			if diverged {
-				return blockAndStop(env, &BlockedState{Reason: "divergence"}, errors.New("map: git-root diverged from upstream; use `gnm pull --force`"))
+				primary := errors.New("map: git-root diverged from upstream; use `gnm pull --force`")
+				return blockAndStop(env, &BlockedState{Reason: "divergence"}, primary)
 			}
 			return fmt.Errorf("map: git-root pull: %w", err)
 		}
@@ -92,9 +121,6 @@ func Pull(env *Env, force bool) error {
 	base := g.Head()
 	if base == "" {
 		return errors.New("map: git-root has no commits")
-	}
-	if err := RemoveSyncable(env); err != nil {
-		return fmt.Errorf("map: disarm .syncable: %w", err)
 	}
 	// mixed reset moves HEAD+index only; working files and real files stay
 	if err := w.ResetMixed(base); err != nil {
@@ -111,6 +137,12 @@ func Pull(env *Env, force bool) error {
 			}
 			env.logf("  %s %s", e.Status, e.Path)
 		}
+	}
+	// The machine is on the new baseline: stale block reasons (divergence,
+	// old conflict list) no longer describe reality — clear them and let
+	// status derive guidance from live state.
+	if err := ClearBlocked(env); err != nil {
+		env.logf("warn: clear blocked state: %v", err)
 	}
 	env.logf("next: `gnm status` → `gnm add|get <path>` → `gnm commit -m \"resolve map conflict\"` → `gnm push`")
 	return nil

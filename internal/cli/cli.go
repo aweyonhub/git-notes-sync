@@ -270,16 +270,23 @@ func cmdSyncAll(args []string) error {
 		}
 	}
 	// map feature: the existing sync entry also drives `gns map sync` when
-	// enabled (spec §7.4) — one scheduler, both features.
+	// enabled (spec §7.4) — one scheduler, both features. Map failures are
+	// reported separately so the summary names what actually failed.
+	var mapFailed bool
 	if cfg.Map.Sync {
 		if err := mapsync.RunSchedulerTick(cfg, func(f string, a ...any) {
 			fmt.Printf("%s[map] %s\n", logStamp(), fmt.Sprintf(f, a...))
 		}); err != nil {
 			fmt.Printf("%s[map] ERROR: %v\n", logStamp(), err)
-			failed = true
+			mapFailed = true
 		}
 	}
-	if failed {
+	switch {
+	case failed && mapFailed:
+		return errors.New("repo sync and map sync failed")
+	case mapFailed:
+		return errors.New("map sync failed")
+	case failed:
 		return errors.New("one or more repos failed")
 	}
 	return nil

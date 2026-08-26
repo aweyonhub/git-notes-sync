@@ -26,6 +26,16 @@ func gitCmd(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// gitCmdAllowFail runs git tolerating non-zero exit (conflicted merges,
+// refused operations), returning combined output for assertions.
+func gitCmdAllowFail(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, _ := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out))
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -268,8 +278,9 @@ func TestInitFailureCleansWorktreeAndKeepsLocal(t *testing.T) {
 func TestInitializedRequiresExpectedWorktreeBranch(t *testing.T) {
 	env, _, _, _ := setupMapped(t, "")
 	gitCmd(t, env.Worktree, "switch", "-c", "other")
-	if IsInitialized(env) {
-		t.Fatal("worktree on the wrong branch reported initialized")
+	initd, ierr := IsInitialized(env)
+	if initd || ierr == nil || !strings.Contains(ierr.Error(), "unexpected branch") {
+		t.Fatalf("wrong branch must report broken, got initd=%v err=%v", initd, ierr)
 	}
 }
 
@@ -607,5 +618,116 @@ func TestSnapshotSaveLoadRoundtrip(t *testing.T) {
 	}
 	if len(freshCfg.Map.Items) != 1 || freshCfg.Map.Items[0].Path != "dot/file.txt" {
 		t.Fatalf("snapshot items not imported: %+v", freshCfg.Map.Items)
+	}
+}
+
+// TestSyncRefusesDuringInterruptedMerge locks in the §"不自动解决冲突" rule:
+// an unresolved merge left in the worktree must stop automatic sync with the
+// gate intact — never be concluded by add -A + commit.
+func TestSyncRefusesDuringInterruptedMerge(t *testing.T) {
+	env, _, local, _ := setupMapped(t, "")
+	armGate(t, env)
+
+	// craft a conflicting second history purely inside the worktree
+	wtBranch := BranchName(env.MapRoot)
+	gitCmd(t, env.Worktree, "checkout", "-b", "tmp-conflict")
+	writeFile(t, mappedWtFile(env), "B-side\n")
+	gitCmd(t, env.Worktree, "add", "-A")
+	gitCmd(t, env.Worktree, "commit", "-m", "b side")
+	gitCmd(t, env.Worktree, "checkout", wtBranch)
+	writeFile(t, local, "C-side\n")
+	writeFile(t, mappedWtFile(env), "C-side\n")
+	gitCmd(t, env.Worktree, "add", "-A")
+	gitCmd(t, env.Worktree, "commit", "-m", "c side")
+
+	// leave a merge unresolved mid-flight
+	gitCmdAllowFail(t, env.Worktree, "merge", "--no-commit", "tmp-conflict")
+
+	headBefore := gitCmd(t, env.Worktree, "rev-parse", "HEAD")
+	err := Sync(env)
+	if err == nil || !strings.Contains(err.Error(), "in-progress") {
+		t.Fatalf("expected in-progress refusal, got %v", err)
+	}
+	if !HasSyncable(env) {
+		t.Fatal(".syncable must survive an interrupted merge (spec §3.2)")
+	}
+	if got := gitCmd(t, env.Worktree, "rev-parse", "HEAD"); got != headBefore {
+		t.Fatal("sync moved HEAD during an interrupted merge")
+	}
+	if un, _ := env.wtRunner().Unmerged(); len(un) == 0 {
+		t.Fatal("conflict state was disturbed by sync")
+	}
+}
+
+// TestLinkRemoteDeletionRequiresChoice pins the 规范派 decision: a remote
+// deletion of the whole mapping root must NOT silently remove the managed
+// local link — it blocks into MANUAL_REQUIRED for an explicit add/get.
+func TestLinkRemoteDeletionRequiresChoice(t *testing.T) {
+	probe := filepath.Join(t.TempDir(), "probe-link")
+	if err := os.Symlink(probe, probe+".lnk"); err != nil {
+		t.Skip("symlinks unavailable on this platform/account")
+	}
+	os.Remove(probe + ".lnk")
+
+	env, remote, local, _ := setupMapped(t, "link")
+	armGate(t, env)
+
+	peer := peerClone(t, remote)
+	if err := os.Remove(filepath.Join(peer, "tm", "dot", "file.txt")); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, peer, "add", "-A")
+	gitCmd(t, peer, "commit", "-m", "remote delete root")
+	gitCmd(t, peer, "push")
+
+	err := Sync(env)
+	if err == nil || !strings.Contains(err.Error(), "mapping root diverged after merge") {
+		t.Fatalf("expected post-merge root violation block, got %v", err)
+	}
+	if fi, lerr := os.Lstat(local); lerr != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("managed link was auto-removed by remote deletion: %v", lerr)
+	}
+	if HasSyncable(env) {
+		t.Fatal(".syncable must be removed when a choice is required")
+	}
+}
+
+// TestConflictPathsSurviveQuotepath drives a real modify/modify conflict on
+// a CJK-named file and asserts the recorded conflict path stays raw even on
+// hosts where core.quotepath defaults to true.
+func TestConflictPathsSurviveQuotepath(t *testing.T) {
+	env, remote, home := newTestEnv(t)
+	local := filepath.Join(home, "测试说明.md")
+	writeFile(t, local, "V1\n")
+	env.Cfg.Map.Items = []config.MapItem{
+		{Scope: config.ScopeMapRoot, Path: "dot/测试说明.md", LocalPath: local},
+	}
+	if err := Init(env); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	armGate(t, env)
+
+	peer := peerClone(t, remote)
+	writeFile(t, filepath.Join(peer, "tm", "dot", "测试说明.md"), "B-remote\n")
+	gitCmd(t, peer, "add", "-A")
+	gitCmd(t, peer, "commit", "-m", "b change")
+	gitCmd(t, peer, "push")
+
+	writeFile(t, local, "C-local\n")
+	err := Sync(env)
+	if err == nil || !strings.Contains(err.Error(), "merge conflict") {
+		t.Fatalf("expected merge conflict, got %v", err)
+	}
+	blocked, rerr := ReadBlocked(env)
+	if rerr != nil || blocked == nil || len(blocked.Conflicts) == 0 {
+		t.Fatalf("blocked conflicts missing: %+v %v", blocked, rerr)
+	}
+	for _, c := range blocked.Conflicts {
+		if strings.Contains(c, "\\3") || strings.Contains(c, `"`) {
+			t.Fatalf("conflict path looks escaped: %q", c)
+		}
+		if !strings.Contains(c, "测试说明.md") {
+			t.Fatalf("unexpected conflict path: %q", c)
+		}
 	}
 }

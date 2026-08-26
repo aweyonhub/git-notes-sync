@@ -18,9 +18,10 @@ const (
 	sideHEAD                    // get: union(local fs, HEAD tree)
 )
 
-// globRegexp compiles a path pattern where * matches any name within a
-// single level — including names starting with "." — and never crosses a
-// separator (spec §5.1). Matching is case-insensitive on Windows.
+// globRegexp compiles a path pattern where * matches any characters within
+// a single level — including names starting with "." — and never crosses a
+// separator (spec §5.1). Both full-segment stars (`/a/*`) and embedded ones
+// (`*.md`, `foo*`) work. Matching is case-insensitive on Windows.
 func globRegexp(pattern string) (*regexp.Regexp, error) {
 	norm := filepath.ToSlash(filepath.Clean(pattern))
 	var b strings.Builder
@@ -32,14 +33,27 @@ func globRegexp(pattern string) (*regexp.Regexp, error) {
 		if i > 0 {
 			b.WriteString("/")
 		}
-		if seg == "*" {
+		switch {
+		case seg == "*":
+			// full-segment star matches at least one name character
 			b.WriteString("[^/]+")
-		} else if seg != "" || i == 0 {
-			b.WriteString(regexp.QuoteMeta(seg))
+		case seg != "" || i == 0:
+			b.WriteString(segmentPattern(seg))
 		}
 	}
 	b.WriteString("$")
 	return regexp.Compile(b.String())
+}
+
+// segmentPattern converts one path segment into regex: embedded stars match
+// any (possibly empty) run of non-separator characters; everything else is
+// literal.
+func segmentPattern(seg string) string {
+	parts := strings.Split(seg, "*")
+	for i := range parts {
+		parts[i] = regexp.QuoteMeta(parts[i])
+	}
+	return strings.Join(parts, "[^/]*")
 }
 
 // selectNodes resolves CLI args (paths, * patterns, or -A) to per-item node
@@ -135,7 +149,7 @@ func exactSelectionExists(env *Env, item config.MapItem, rel string, side gitSid
 	if side == sideWorktree {
 		return kindOf(wtPath) != kMissing, nil
 	}
-	return env.headContains(item, repoRel)
+	return env.headContains(repoRel)
 }
 
 // unionCandidates enumerates the candidate node set for one mapping:
@@ -185,22 +199,20 @@ func unionCandidates(env *Env, item config.MapItem, side gitSide) ([]string, err
 }
 
 // collapseDescendants drops nodes whose ancestor is also selected, so a
-// selected directory is processed once, recursively (spec §5.1).
+// selected directory is processed once, recursively (spec §5.1). Sorted
+// input makes a single pass sufficient: every descendant of a kept node is
+// adjacent-after it in sort order.
 func collapseDescendants(rels []string) []string {
 	sorted := append([]string(nil), rels...)
 	sort.Strings(sorted)
 	var kept []string
+	last := ""
 	for _, r := range sorted {
-		nested := false
-		for _, k := range kept {
-			if within(r, k) {
-				nested = true
-				break
-			}
+		if last != "" && within(r, last) {
+			continue // descendant of the nearest kept ancestor
 		}
-		if !nested {
-			kept = append(kept, r)
-		}
+		kept = append(kept, r)
+		last = r
 	}
 	return kept
 }

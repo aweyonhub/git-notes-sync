@@ -148,13 +148,38 @@ func (e *Env) headRels(item config.MapItem) ([]string, error) {
 	return out, nil
 }
 
+// ErrWorktreeBroken marks a worktree directory that exists but cannot be
+// used: it belongs to another repository or sits on the wrong branch.
+// Callers must surface it instead of degrading to "not initialized" —
+// silently treating debris as uninitialized hides a stale machine state.
+var ErrWorktreeBroken = errors.New("worktree is bound to another repository or on an unexpected branch")
+
 // IsInitialized reports whether the machine worktree exists with its branch
 // (both-or-neither; a lone side is partial-init debris reported by Init).
-func IsInitialized(env *Env) bool {
+// gitErr != nil means inspection itself failed; brokenErr != nil means the
+// directory exists but is NOT a usable worktree for this map-root — both
+// must be surfaced, never folded into plain "not initialized".
+func IsInitialized(env *Env) (initd bool, brokenErr error) {
 	if _, err := os.Stat(filepath.Join(env.Worktree, ".git")); err != nil {
-		return false
+		return false, nil // nothing there yet — genuinely uninitialized
 	}
-	return env.wtRunner().CurrentBranch() == BranchName(env.MapRoot)
+	w := env.wtRunner()
+	if w.CurrentBranch() != BranchName(env.MapRoot) {
+		return false, fmt.Errorf("%w: %s", ErrWorktreeBroken, env.Worktree)
+	}
+	// Bind the worktree to THIS git-root: after a git-root switch a stale
+	// directory would otherwise pass the branch check and operate on the
+	// wrong repository (common dir lives under <git-root>/.git).
+	common, err := w.Out("rev-parse", "--git-common-dir")
+	if err != nil {
+		return false, fmt.Errorf("inspect worktree %s: %w", env.Worktree, err)
+	}
+	commonAbs := NormalizeLocal(common)
+	if !strings.HasPrefix(LocalKey(commonAbs), LocalKey(env.GitRoot)+"/") &&
+		LocalKey(commonAbs) != LocalKey(env.GitRoot) {
+		return false, fmt.Errorf("%w: %s belongs to %s", ErrWorktreeBroken, env.Worktree, commonAbs)
+	}
+	return true, nil
 }
 
 func ensureStateDir(env *Env) error { return os.MkdirAll(env.State, 0o755) }
@@ -250,4 +275,11 @@ func ReadBlocked(env *Env) (*BlockedState, error) {
 }
 
 // ClearBlocked drops the record once a manual push succeeded.
-func ClearBlocked(env *Env) { _ = os.Remove(BlockedPath(env)) }
+// ClearBlocked drops the record once recovery succeeded. A missing record
+// is a successful no-op; other failures surface to the caller.
+func ClearBlocked(env *Env) error {
+	if err := os.Remove(BlockedPath(env)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}

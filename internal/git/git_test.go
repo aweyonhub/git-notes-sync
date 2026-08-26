@@ -136,3 +136,107 @@ func TestRunnerNoTimeoutByDefault(t *testing.T) {
 		t.Fatalf("out = %q, want fake", out)
 	}
 }
+
+// TestLsTreeHeadRawNames pins -z behavior: non-ASCII and quote-containing
+// names must come back raw even when core.quotepath is at its default
+// (true) — stock environments would otherwise feed escaped `"\344..."`
+// strings into wildcard matching.
+func TestLsTreeHeadRawNames(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRunner(dir)
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.name", "t"},
+		{"config", "user.email", "t@example.com"},
+	} {
+		if _, err := r.Out(args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	names := []string{"中文笔记.md", "plain.md"}
+	if runtime.GOOS != "windows" {
+		// `"` is illegal in Windows filenames; POSIX covers the quoted-name
+		// branch of the -z fix
+		names = append(names, `we"ird.md`)
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := r.Out("add", "-A"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Out("commit", "-m", "names"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.LsTreeHead("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{}
+	for _, n := range names {
+		want[n] = true
+	}
+	if len(got) != len(want) {
+		t.Fatalf("LsTreeHead = %v, want %v", got, want)
+	}
+	for _, g := range got {
+		if !want[g] {
+			t.Fatalf("unexpected/escaped name: %q (want set %v)", g, want)
+		}
+	}
+
+	sub, err := r.LsTreeHead("中文笔记.md")
+	if err != nil || len(sub) != 1 || sub[0] != "中文笔记.md" {
+		t.Fatalf("subtree query by CJK name failed: %v, %v", sub, err)
+	}
+}
+
+// TestCachedNumstatRawPaths pins the runner-level core.quotepath=off:
+// staged CJK paths must come back raw for AI summaries, even on hosts
+// where git would otherwise escape them.
+func TestCachedNumstatRawPaths(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRunner(dir)
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.name", "t"},
+		{"config", "user.email", "t@example.com"},
+	} {
+		if _, err := r.Out(args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	p := filepath.Join(dir, "中文.md")
+	if err := os.WriteFile(p, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Out("add", "-A"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Out("commit", "-m", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Out("add", "-A"); err != nil {
+		t.Fatal(err)
+	}
+
+	ns, err := r.CachedNumstat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ns) != 1 {
+		t.Fatalf("numstat rows = %d, want 1", len(ns))
+	}
+	if !strings.Contains(ns[0].Path, "中文.md") || strings.Contains(ns[0].Path, `"`) {
+		t.Fatalf("CJK path not raw: %q", ns[0].Path)
+	}
+	if ns[0].Added != 1 || ns[0].Deleted != 1 {
+		t.Fatalf("unexpected counts: %+v", ns[0])
+	}
+}

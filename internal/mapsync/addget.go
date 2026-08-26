@@ -9,7 +9,6 @@ import (
 	"os"
 	"sort"
 
-	"github.com/aweyonhub/git-notes-sync/internal/config"
 	"github.com/aweyonhub/git-notes-sync/internal/lock"
 )
 
@@ -19,7 +18,11 @@ import (
 // config snapshot get staged alongside the mapped content.
 func Add(env *Env, args []string, all bool) error {
 	if all {
-		if !IsInitialized(env) {
+		initd, ierr := IsInitialized(env)
+		if ierr != nil {
+			return fmt.Errorf("map: inspect worktree: %w", ierr)
+		}
+		if !initd {
 			return errors.New("map: not initialized; run `gnm init` first")
 		}
 		if err := ensureStateDir(env); err != nil {
@@ -51,7 +54,11 @@ func Get(env *Env, args []string, all bool) error {
 // mutateSelected shares the plumbing of Add/Get: resolve arguments to nodes,
 // collapse nested selections, take the lock, then run op per node.
 func mutateSelected(env *Env, args []string, all bool, side gitSide, op func(env *Env, itemIdx int, rel string) error) error {
-	if !IsInitialized(env) {
+	initd, ierr := IsInitialized(env)
+	if ierr != nil {
+		return fmt.Errorf("map: inspect worktree: %w", ierr)
+	}
+	if !initd {
 		return errors.New("map: not initialized; run `gnm init` first")
 	}
 	if len(args) == 0 && !all {
@@ -137,7 +144,7 @@ func getNode(env *Env, idx int, rel string) error {
 		return err
 	}
 
-	inHead, err := env.headContains(it, repoRel)
+	inHead, err := env.headContains(repoRel)
 	if err != nil {
 		return err
 	}
@@ -201,7 +208,7 @@ func getNode(env *Env, idx int, rel string) error {
 
 // headContains reports whether HEAD tracks repoRel itself or anything under
 // it (file node or directory subtree).
-func (e *Env) headContains(item config.MapItem, repoRel string) (bool, error) {
+func (e *Env) headContains(repoRel string) (bool, error) {
 	names, err := e.wtRunner().LsTreeHead(repoRel)
 	if err != nil {
 		return false, err
@@ -210,11 +217,25 @@ func (e *Env) headContains(item config.MapItem, repoRel string) (bool, error) {
 }
 
 // Commit commits whatever is staged — never staging anything itself, never
-// touching remotes or .syncable (spec §6.6).
+// touching remotes or .syncable (spec §6.6). Takes the map lock so a manual
+// commit cannot interleave with a running chain on the same worktree.
 func Commit(env *Env, msg string) error {
-	if !IsInitialized(env) {
+	initd, ierr := IsInitialized(env)
+	if ierr != nil {
+		return fmt.Errorf("map: inspect worktree: %w", ierr)
+	}
+	if !initd {
 		return errors.New("map: not initialized; run `gnm init` first")
 	}
+	if err := ensureStateDir(env); err != nil {
+		return err
+	}
+	unlock, err := lock.Acquire(env.State)
+	if err != nil {
+		return fmt.Errorf("map: %w", err)
+	}
+	defer unlock()
+
 	w := env.wtRunner()
 	staged, err := w.HasStaged()
 	if err != nil {

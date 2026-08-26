@@ -52,7 +52,7 @@
         ↕ gnm push 或 gnm sync 触发合并,**唯一可能有冲突**的地方需要人工解决
 机器 worktree HEAD:
         ↕ add/get/commit等命令选择并提交本机内容
-机器 worktree 文件: 
+机器 worktree 文件:
         ↕ 通过软连接或者copy机制与本地文件**强一致**
 本机真实文件
 ~~~
@@ -258,6 +258,8 @@ local_path = "~/.bashrc"
 | `copy` | 显式使用增量复制，不创建 watcher |
 
 `auto` 在 `init` 时解析为实际模式，后续保持不变；`gnm status` 应同时展示配置值和实际值，例如 `mode: auto → copy`。
+
+> **link 模式的平台限制**：三平台共用同一实现（Go 标准库 `os.Symlink`），行为一致——创建失败即报错，不静默回退为 copy。Windows 创建符号链接需要管理员权限或已开启开发者模式；未满足时请使用 `copy`（或保持 `auto`，Windows 自动解析为 copy）。
 
 ### 4.5 增删映射生效时机
 
@@ -760,9 +762,9 @@ gnm push
 
 ## 十、待定事项
 
-- `.syncable` 使用空标记文件还是保存版本和最后成功时间；
+- ~~`.syncable` 使用空标记文件还是保存版本和最后成功时间~~ → **已决**：写入一行 `syncable since <RFC3339>`（§3.2）；
 - 操作中断后如何记录执行阶段和旧 git-root / worktree HEAD，以及使用隐藏 ref、备份分支还是状态文件；
 - copy 是否增加可选的 hash 校验；
 - 是否增加 `dry-run`、批量迁移和卸载等辅助能力；
-- 自动 commit message 的默认格式，是否沿用 `gns sync` 的默认提交信息；
+- ~~自动 commit message 的默认格式~~ → **已决**：`map(<map-root>): update mapped content`；
 - Bash / Zsh 自动补全同 `gns` 还未实现。

@@ -57,11 +57,16 @@ func Status(env *Env) (string, error) {
 	var b strings.Builder
 	g := env.gitRunner()
 	w := env.wtRunner()
-	init := IsInitialized(env)
+	init, initErr := IsInitialized(env)
 	syncable := HasSyncable(env)
 	blocked, err := ReadBlocked(env)
 	if err != nil {
 		return "", fmt.Errorf("read map blocked state: %w", err)
+	}
+	if initErr != nil && blocked == nil {
+		// a broken worktree is exactly what status must diagnose — surface
+		// the reason instead of failing the whole command
+		blocked = &BlockedState{Reason: "worktree-broken", Detail: initErr.Error()}
 	}
 	mappingProblem := ""
 	operation := ""
@@ -78,6 +83,9 @@ func Status(env *Env) (string, error) {
 	state := "NOT_INITIALIZED"
 	switch {
 	case !init:
+		if initErr != nil {
+			state = "MANUAL_REQUIRED" // broken debris needs a human decision
+		}
 	case syncable:
 		state = "SYNCABLE"
 	default:
@@ -86,8 +94,12 @@ func Status(env *Env) (string, error) {
 
 	fmt.Fprintf(&b, "state:      %s\n", state)
 	fmt.Fprintf(&b, "map-root:   %s\n", env.MapRoot)
-	fmt.Fprintf(&b, "mode:       %s", env.Cfg.Map.Mode)
-	if env.Cfg.Map.Mode != env.Mode {
+	modeCfg := env.Cfg.Map.Mode
+	if modeCfg == "" {
+		modeCfg = "auto" // same fallback StatusUninitialized applies
+	}
+	fmt.Fprintf(&b, "mode:       %s", modeCfg)
+	if modeCfg != env.Mode {
 		fmt.Fprintf(&b, " → %s", env.Mode) // auto resolved at init time
 	}
 	b.WriteString("\n")
@@ -95,6 +107,8 @@ func Status(env *Env) (string, error) {
 	if gr := repoLine(g); gr != "" {
 		fmt.Fprintf(&b, "git-root:   %s\n", env.GitRoot)
 		fmt.Fprintf(&b, "            %s\n", gr)
+	} else {
+		fmt.Fprintf(&b, "git-root:   %s\n            NOT_A_GIT_REPOSITORY\n            Next: clone or create a Git repository there, or fix map.git_root\n", env.GitRoot)
 	}
 	dirty := false
 	if init {
@@ -245,6 +259,10 @@ func nextSteps(env *Env, state string, blocked *BlockedState, dirty bool, mappin
 	switch {
 	case state == "NOT_INITIALIZED":
 		s = append(s, "Next: gnm init")
+	case blocked != nil && blocked.Reason == "worktree-broken":
+		s = append(s,
+			"Next: fix or remove the worktree directory shown above",
+			"Then: gnm init   # re-creates it and reapplies every mapping")
 	case operation != "":
 		s = append(s,
 			"Next: finish or abort the in-progress Git operation shown above",
@@ -253,7 +271,7 @@ func nextSteps(env *Env, state string, blocked *BlockedState, dirty bool, mappin
 		s = append(s,
 			"Next: gnm pull --force",
 			"      gnm status",
-			"      gnm add <path> 或 gnm get <path>",
+			"      gnm add <path> or gnm get <path>",
 			"      gnm commit -m \"resolve map divergence\"",
 			"      gnm push")
 	case blocked != nil && blocked.Reason == "merge-conflict":
@@ -265,7 +283,7 @@ func nextSteps(env *Env, state string, blocked *BlockedState, dirty bool, mappin
 		s = append(s, "      gnm status")
 		for _, p := range blocked.Conflicts {
 			local := localPathForRepo(env, p)
-			s = append(s, fmt.Sprintf("      gnm add %s 或 gnm get %s", quoteCLI(local), quoteCLI(local)))
+			s = append(s, fmt.Sprintf("      gnm add %s or gnm get %s", quoteCLI(local), quoteCLI(local)))
 		}
 		s = append(s, "      gnm commit -m \"resolve map conflict\"", "      gnm push")
 	case state == "MANUAL_REQUIRED" && mappingProblem != "":
@@ -277,7 +295,7 @@ func nextSteps(env *Env, state string, blocked *BlockedState, dirty bool, mappin
 		s = append(s, "Next: gnm push   # confirm the clean initial/recovery state")
 	case state == "MANUAL_REQUIRED":
 		s = append(s,
-			"Next: gnm add <path> 或 gnm get <path>   # choose content",
+			"Next: gnm add <path> or gnm get <path>   # choose content",
 			"Then: gnm push                          # re-arm .syncable")
 	case state == "SYNCABLE" && dirty:
 		s = append(s,

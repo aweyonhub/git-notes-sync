@@ -28,7 +28,11 @@ func newRunner(dir string, cfg *config.Config) *git.Runner {
 // sync mode auto-commits). Requires .syncable — without it the machine is
 // MANUAL_REQUIRED and only guidance is printed (spec §7.4).
 func Sync(env *Env) error {
-	if !IsInitialized(env) {
+	initd, ierr := IsInitialized(env)
+	if ierr != nil {
+		return fmt.Errorf("map: inspect worktree: %w", ierr)
+	}
+	if !initd {
 		return errors.New("map: not initialized; run `gnm init` first")
 	}
 	if !HasSyncable(env) {
@@ -45,7 +49,11 @@ func Sync(env *Env) error {
 // Push is the manual confirmation entry: it requires an already-committed
 // worktree and creates .syncable after full success (spec §6.7).
 func Push(env *Env) error {
-	if !IsInitialized(env) {
+	initd, ierr := IsInitialized(env)
+	if ierr != nil {
+		return fmt.Errorf("map: inspect worktree: %w", ierr)
+	}
+	if !initd {
 		return errors.New("map: not initialized; run `gnm init` first")
 	}
 	return runChain(env, false)
@@ -64,6 +72,12 @@ func runChain(env *Env, auto bool) error {
 	}
 	defer unlock()
 
+	// Re-check under the lock: a concurrent config change may have disarmed
+	// the gate between the entry check and here (§3.2).
+	if auto && !HasSyncable(env) {
+		return errors.New("map: .syncable was removed while waiting for the lock; run `gnm status`")
+	}
+
 	// -- preconditions (§7.1)
 	if !g.IsRepo() {
 		return fmt.Errorf("map: git-root is not a repository: %s", env.GitRoot)
@@ -75,6 +89,24 @@ func runChain(env *Env, auto bool) error {
 	remote, rbranch, hasUp := g.Upstream()
 	if !hasUp {
 		return fmt.Errorf("map: git-root branch %q has no upstream; push it once manually", branch)
+	}
+
+	// An interrupted merge/rebase must never be concluded automatically:
+	// add -A would stage conflict markers as if they were resolutions.
+	if op, err := g.MergeInProgress(); err != nil {
+		return fmt.Errorf("map: inspect git-root: %w", err)
+	} else if op != "" {
+		return fmt.Errorf("map: git-root has an in-progress %s; finish or abort it first (.syncable kept)", op)
+	}
+	if op, err := w.MergeInProgress(); err != nil {
+		return fmt.Errorf("map: inspect worktree: %w", err)
+	} else if op != "" {
+		return fmt.Errorf("map: worktree has an in-progress %s; finish or abort it first (.syncable kept)", op)
+	}
+	if entries, err := g.Status(); err != nil {
+		return fmt.Errorf("map: inspect git-root: %w", err)
+	} else if len(entries) > 0 {
+		return errors.New("map: git-root has uncommitted files; commit or clean them first (.syncable kept)")
 	}
 	wtBranch := BranchName(env.MapRoot)
 
@@ -139,7 +171,7 @@ func runChain(env *Env, auto bool) error {
 		return fmt.Errorf("map: worktree merge %s: %w", branch, err)
 	}
 
-	// step 7: post-merge root check. reset --merge restores the old commit
+	// step 6: post-merge root check. reset --merge restores the old commit
 	// without using reset --hard on the machine worktree.
 	if viol := rootViolations(env); viol != "" {
 		if err := w.ResetMerge(preMerge); err != nil {
@@ -156,7 +188,7 @@ func runChain(env *Env, auto bool) error {
 		}
 	}
 
-	// step 8: link cleanup is cheap. Copy mode first asks Git whether any
+	// step 7: link cleanup is cheap. Copy mode first asks Git whether any
 	// mapped path changed, avoiding a full deploy scan for unrelated commits.
 	deploy := env.LinkMode()
 	mergedHead := w.Head()
@@ -180,13 +212,13 @@ func runChain(env *Env, auto bool) error {
 		}
 	}
 
-	// step 9: fast-forward git-root to the merged worktree HEAD
+	// step 8: fast-forward git-root to the merged worktree HEAD
 	if err := g.MergeFFOnly(wtBranch); err != nil {
 		primary := fmt.Errorf("map: git-root cannot fast-forward to %s: %v; run `gnm status`", wtBranch, shortErr(err))
 		return blockAndStop(env, &BlockedState{Reason: "fastforward-failed", Detail: err.Error()}, primary)
 	}
 
-	// step 10: every push failure keeps .syncable. The next round's
+	// step 9: every push failure keeps .syncable. The next round's
 	// pull --ff-only and commit-graph check officially judge divergence
 	// (§7.3), so push stderr wording does not affect state transitions.
 	err = retry.Do(env.Cfg.RetryAttempts, func() error {
@@ -196,11 +228,13 @@ func runChain(env *Env, auto bool) error {
 		return fmt.Errorf("map: git-root push failed; .syncable kept — retry or run `gnm status`: %w", err)
 	}
 
-	// step 11: success — arm/keep the gate and clear stale block info
+	// step 10: success — arm/keep the gate and clear stale block info
 	if err := CreateSyncable(env); err != nil {
 		return fmt.Errorf("map: synchronized but could not create .syncable: %w", err)
 	}
-	ClearBlocked(env)
+	if cerr := ClearBlocked(env); cerr != nil {
+		env.logf("warn: clear blocked state: %v", cerr)
+	}
 	env.logf("map %s: synced → %s/%s", env.MapRoot, remote, rbranch)
 	return nil
 }
@@ -231,7 +265,13 @@ func rootViolations(env *Env) string {
 				probs = append(probs, fmt.Sprintf("%s: link points outside the managed worktree", it.LocalPath))
 				continue
 			}
-			lk = wk
+			// 规范派(§5.2): treat the managed link as the repo side only
+			// while the worktree node still exists. When the remote deleted
+			// the whole root, the broken link must surface as a one-side
+			// violation for manual choice — never silently disappear.
+			if wk != kMissing {
+				lk = wk
+			}
 		}
 		switch {
 		case lk == kMissing && wk == kMissing:
@@ -277,6 +317,8 @@ func convergeIntoWorktree(env *Env, confirmMissing bool) (map[int]copyBaseline, 
 		localAbs := NormalizeLocal(it.LocalPath)
 		wtPath, err := env.worktreePathOf(it)
 		if err != nil {
+			// config-invalid mapping: deploy must not touch it unguarded
+			baselines[i] = copyBaseline{}
 			continue
 		}
 		if kindOf(localAbs) == kMissing {
@@ -285,6 +327,9 @@ func convergeIntoWorktree(env *Env, confirmMissing bool) (map[int]copyBaseline, 
 					return nil, err
 				}
 			}
+			// Record the absence so the deploy pass refuses to overwrite a
+			// file created here while Git was integrating (§9.1).
+			baselines[i] = copyBaseline{"": {Kind: kMissing}}
 			continue
 		}
 		baseline, err := syncTreeTracked(localAbs, wtPath)
@@ -327,7 +372,9 @@ func deployFromWorktree(env *Env, baselines map[int]copyBaseline) error {
 			continue
 		}
 		if wk == kMissing {
-			if err := os.RemoveAll(localAbs); err != nil {
+			// Remote deleted the whole root: guard against clobbering a file
+			// the user created or edited while Git was integrating (§9.1).
+			if err := syncTreeGuarded(wtPath, localAbs, baselines[i]); err != nil {
 				return err
 			}
 			continue
@@ -428,7 +475,14 @@ func RunSchedulerTick(cfg *config.Config, logf func(string, ...any)) error {
 	if err != nil {
 		return err
 	}
-	if !IsInitialized(env) {
+	initd, ierr := IsInitialized(env)
+	if ierr != nil {
+		// surface inspection failures instead of silently skipping —
+		// a broken worktree must be visible in scheduler logs
+		logf("map %s: inspect: %v", env.MapRoot, ierr)
+		return nil
+	}
+	if !initd {
 		return nil
 	}
 	if !HasSyncable(env) {

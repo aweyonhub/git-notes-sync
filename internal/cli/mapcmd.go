@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/lock"
 	"github.com/aweyonhub/git-notes-sync/internal/mapsync"
 )
 
@@ -20,7 +21,7 @@ usage:
   gnm add <path|pattern...> | -A   select the LOCAL version and stage it
   gnm get <path|pattern...> | -A   select the HEAD version and deploy it
   gnm commit [-m <message>]   commit staged content only
-  gnm pull [-f | --force]     rebase machine onto git-root (files untouched)
+  gnm pull [-f | --force]     move the machine baseline to git-root (files untouched)
   gnm push                    manual confirm entry; arms .syncable
   gnm sync                    automatic entry; requires .syncable
 
@@ -97,6 +98,9 @@ func cmdMap(args []string) error {
 		if err := fs.Parse(normalizeArgs(rest, map[string]bool{"c": true})); err != nil {
 			return err
 		}
+		if fs.NArg() > 0 {
+			return errors.New("gnm <sub> takes no arguments")
+		}
 		env, err := loadMapEnv(cfgPath)
 		if err != nil {
 			return err
@@ -109,6 +113,9 @@ func cmdMap(args []string) error {
 		fs.StringVar(&cfgPath, "c", "", "config file path")
 		if err := fs.Parse(normalizeArgs(rest, map[string]bool{"c": true})); err != nil {
 			return err
+		}
+		if fs.NArg() > 0 {
+			return errors.New("gnm <sub> takes no arguments")
 		}
 		cfg, p, err := loadUserConfig(cfgPath)
 		if err != nil {
@@ -153,15 +160,24 @@ func cmdMap(args []string) error {
 	case "commit":
 		fs := flag.NewFlagSet("map commit", flag.ContinueOnError)
 		var cfgPath, msg string
+		// sentinel distinguishes an omitted -m (use the default) from an
+		// explicitly empty value, which the design rejects (spec §6.6)
+		const msgUnset = "\x00unset"
 		commonValueFlags := map[string]bool{"c": true, "m": true, "message": true}
 		fs.StringVar(&cfgPath, "c", "", "config file path")
-		fs.StringVar(&msg, "m", "", "commit message")
-		fs.StringVar(&msg, "message", "", "commit message (long form)")
+		fs.StringVar(&msg, "m", msgUnset, "commit message")
+		fs.StringVar(&msg, "message", msgUnset, "commit message (long form)")
 		if err := fs.Parse(normalizeArgs(rest, commonValueFlags)); err != nil {
 			return err
 		}
 		if len(fs.Args()) > 0 {
 			return errors.New("usage: gnm commit [-m <message>]")
+		}
+		if msg == "" {
+			return errors.New("map commit: message must not be empty (omit -m for the default)")
+		}
+		if msg == msgUnset {
+			msg = ""
 		}
 		env, err := loadMapEnv(cfgPath)
 		if err != nil {
@@ -178,6 +194,9 @@ func cmdMap(args []string) error {
 		if err := fs.Parse(normalizeArgs(rest, map[string]bool{"c": true})); err != nil {
 			return err
 		}
+		if fs.NArg() > 0 {
+			return errors.New("gnm <sub> takes no arguments")
+		}
 		env, err := loadMapEnv(cfgPath)
 		if err != nil {
 			return err
@@ -191,6 +210,9 @@ func cmdMap(args []string) error {
 		if err := fs.Parse(normalizeArgs(rest, map[string]bool{"c": true})); err != nil {
 			return err
 		}
+		if fs.NArg() > 0 {
+			return errors.New("gnm <sub> takes no arguments")
+		}
 		env, err := loadMapEnv(cfgPath)
 		if err != nil {
 			return err
@@ -203,6 +225,9 @@ func cmdMap(args []string) error {
 		fs.StringVar(&cfgPath, "c", "", "config file path")
 		if err := fs.Parse(normalizeArgs(rest, map[string]bool{"c": true})); err != nil {
 			return err
+		}
+		if fs.NArg() > 0 {
+			return errors.New("gnm <sub> takes no arguments")
 		}
 		env, err := loadMapEnv(cfgPath)
 		if err != nil {
@@ -356,6 +381,27 @@ func cmdMapConfig(args []string) error {
 		if rerr != nil {
 			return rerr
 		}
+		// The initialization gate must come before the optional map-root
+		// argument is honored: writing a snapshot for an uninitialized
+		// worktree would create an orphan .gns tree that later blocks init.
+		initd, ierr := mapsync.IsInitialized(env)
+		if ierr != nil {
+			fmt.Printf("warn: inspect worktree: %v\n", ierr)
+			fmt.Println("worktree not initialized; no snapshot written now — `gnm init` will create the initial snapshot")
+			return nil
+		}
+		if !initd {
+			fmt.Println("worktree not initialized; no snapshot written now — `gnm init` will create the initial snapshot")
+			return nil
+		}
+		if err := os.MkdirAll(env.State, 0o755); err != nil {
+			return err
+		}
+		unlock, uerr := lock.Acquire(env.State)
+		if uerr != nil {
+			return fmt.Errorf("map: %w", uerr)
+		}
+		defer unlock()
 		// effective map-root: CLI arg wins over the configured one (§4.6);
 		// the snapshot content is always the current user [map] section
 		if len(args) == 1 && args[0] != env.MapRoot {
@@ -365,10 +411,6 @@ func cmdMapConfig(args []string) error {
 			snapEnv := *env
 			snapEnv.MapRoot = args[0]
 			return mapsync.SaveSnapshot(&snapEnv)
-		}
-		if !mapsync.IsInitialized(env) {
-			fmt.Println("worktree not initialized; no snapshot written now — `gnm init` will create the initial snapshot")
-			return nil
 		}
 		return mapsync.SaveSnapshot(env)
 
@@ -386,8 +428,14 @@ func cmdMapConfig(args []string) error {
 			return err
 		}
 		env, rerr := mapsync.ResolveEnv(safeCfg(cfg), p, mapLogf)
-		if rerr == nil && mapsync.IsInitialized(env) {
-			return errors.New("worktree already initialized; use `gnm config add/remove` instead")
+		if rerr == nil {
+			initd, ierr := mapsync.IsInitialized(env)
+			if ierr != nil {
+				return fmt.Errorf("map: inspect worktree: %w (resolve it before loading a snapshot)", ierr)
+			}
+			if initd {
+				return errors.New("worktree already initialized; use `gnm config add/remove` instead")
+			}
 		}
 		var mr string
 		if len(args) == 1 {
@@ -421,7 +469,12 @@ func initializedEnvOrNil(cfgPath string, cfg *config.Config) (*mapsync.Env, erro
 		}
 		return nil, err
 	}
-	if !mapsync.IsInitialized(env) {
+	initd, ierr := mapsync.IsInitialized(env)
+	if ierr != nil {
+		// broken debris must not silently degrade to "pre-init edits only"
+		return nil, ierr
+	}
+	if !initd {
 		return nil, nil
 	}
 	return env, nil
