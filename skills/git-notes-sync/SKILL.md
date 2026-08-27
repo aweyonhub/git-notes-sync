@@ -190,7 +190,7 @@ gns uninstall                  # 卸载
 | `link` | 符号链接，创建失败报错不降级 | Linux/macOS 原生；Windows 需开发者模式或管理员 |
 | `copy` | 增量复制，不做 watcher | 所有 |
 
-> **Windows link 前提**：需开启"开发者模式"（设置→系统→开发者选项）或以管理员运行。开发者模式一次开启永久生效，普通终端即可创建 symlink。
+> **Windows link 前提**：需开启"开发者模式"（设置→系统→开发者选项）或以管理员运行。开发者模式一次开启永久生效，普通终端即可创建 symlink。已开启开发者模式时**推荐使用 link 模式**，获得零复制的实时编辑体验（`gns config set map.mode link`）；未开启或无管理员权限时改用 copy。
 
 ### 4.4 配置
 
@@ -325,7 +325,7 @@ gnm push
 
 | 问题 | 结论 |
 |------|------|
-| Windows link 模式 | 需开发者模式或管理员；`auto` 默认选 copy 避开限制 |
+| Windows link 模式 | 需开发者模式或管理员；`auto` 默认选 copy 避开限制；已开启开发者模式推荐显式 `link`（零复制实时编辑） |
 | 跨盘 symlink | 支持（NTFS 原生） |
 | WSL 文件管理 | Windows gns **不能**通过 UNC 路径操作 WSL git 仓库（`failed to get owner`）；需 WSL 内单独部署 Linux 版 gns |
 | 多环境部署 | 各环境管各环境的原生文件，共享同一远程仓库，用不同 map-root 隔离 |

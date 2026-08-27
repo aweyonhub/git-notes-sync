@@ -54,6 +54,14 @@ gns config set map.mode auto
 - `map-root`：当前机器在仓库中的命名空间，例如 `winTx`、`mba-m4`、`tx-wsl-de13`。
 - `mode`：`auto`、`link` 或 `copy`。`auto` 在 Windows 上解析为 `copy`，在 Linux/macOS 上解析为 `link`。
 
+> Windows 已开启**开发者模式**时，推荐显式使用 `link` 模式，获得零复制的实时编辑体验（本机路径直接是 worktree 软链接）：
+>
+> ```bash
+> gns config set map.mode link
+> ```
+>
+> 未开启开发者模式（或没有管理员权限）时，Windows 创建软链接会报错，此时用 `copy` 模式即可。
+
 worktree 已初始化且仍存在映射项时，不能修改这三个基础字段。需要先执行：
 
 ```bash
