@@ -132,8 +132,10 @@ func (e *Env) safeWorktreePath(item config.MapItem, rel string) (string, error) 
 	// catches symlinks at ANY level (including the final segment) by
 	// resolving all symlinks and comparing prefixes.
 	physical, perr := filepath.EvalSymlinks(abs)
-	if perr != nil && !os.IsNotExist(perr) {
-		// Lstat-based fallback: walk ancestors manually.
+	if perr != nil {
+		// EvalSymlinks failed (including NotExist when a symlink points
+		// at a missing target). Always fall back to checkAncestors so a
+		// dangling symlink can't bypass validation.
 		if err := checkAncestors(abs, e.Worktree, false); err != nil {
 			return "", err
 		}
@@ -193,10 +195,7 @@ func checkAncestors(path, root string, allowRootLink bool) error {
 		if li.Mode()&os.ModeSymlink != 0 {
 			// In link mode the mapping root itself is a managed symlink —
 			// allow it as the sole exception.
-			if allowRootLink && LocalKey(cur) == rootKey && !isLast {
-				continue
-			}
-			if allowRootLink && isLast && LocalKey(cur) == rootKey {
+			if allowRootLink && LocalKey(cur) == rootKey {
 				continue
 			}
 			// A symlink at the final segment is fine for read operations

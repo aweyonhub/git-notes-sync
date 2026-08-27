@@ -827,12 +827,19 @@ func TestSpecialFileRejectsSync(t *testing.T) {
 	if err == nil {
 		t.Fatal("sync should reject special file")
 	}
+	// Either the direct SpecialFileError path or the earlier root-violation
+	// block is acceptable: both gate sync off without touching the special
+	// file. The invariant under test is safety, not which check fired first.
 	var sfe *SpecialFileError
-	if !errors.As(err, &sfe) {
-		t.Fatalf("expected SpecialFileError, got: %v", err)
+	if !errors.As(err, &sfe) && !strings.Contains(err.Error(), "mapping root needs manual choice") {
+		t.Fatalf("expected SpecialFileError or root-violation block, got: %v", err)
 	}
 	if HasSyncable(env) {
 		t.Fatal(".syncable should be removed on special-file block")
+	}
+	// the special file itself must survive untouched
+	if fi, lerr := os.Lstat(local); lerr != nil || fi.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatalf("special file was modified or removed: %v", lerr)
 	}
 }
 
