@@ -190,7 +190,8 @@ func (r *Repos) All() []Repo {
 
 func (r *Repos) Len() int { return len(r.list) }
 
-// Find matches a repo by name (exact), then by path (exact, then prefix).
+// Find matches a repo by name (exact), then by path (exact, then longest
+// path prefix — so ~/notes2 doesn't match ~/notes).
 func (r *Repos) Find(nameOrPath string) (Repo, bool) {
 	for _, rep := range r.list {
 		if rep.Name == nameOrPath || rep.Path == nameOrPath {
@@ -198,11 +199,20 @@ func (r *Repos) Find(nameOrPath string) (Repo, bool) {
 		}
 	}
 	// Prefix match on path: a sub-directory of a configured repo should
-	// still resolve to its owner.
+	// still resolve to its owner. Return the longest matching prefix so
+	// the most specific owner wins.
+	var best Repo
+	bestLen := -1
 	for _, rep := range r.list {
 		if rep.Path != "" && strings.HasPrefix(nameOrPath, rep.Path) {
-			return rep, true
+			if len(rep.Path) > bestLen {
+				best = rep
+				bestLen = len(rep.Path)
+			}
 		}
+	}
+	if bestLen >= 0 {
+		return best, true
 	}
 	return Repo{}, false
 }

@@ -215,14 +215,19 @@ func AddItem(cfgPath string, cfg *config.Config, scope, repoPath, local string, 
 func expandHomeTilde(local string) string {
 	norm := NormalizeLocal(local)
 	if home, err := os.UserHomeDir(); err == nil {
-		homeKey := LocalKey(NormalizeLocal(home))
+		homeNorm := NormalizeLocal(home)
+		homeKey := LocalKey(homeNorm)
 		normKey := LocalKey(norm)
 		if within(normKey, homeKey) {
-			rel := relUnder(homeKey, normKey)
-			if rel == "" {
+			if normKey == homeKey {
 				return "~"
 			}
-			return "~/" + rel
+			// Preserve original casing: the suffix after homeKey+"/" in
+			// normKey maps to the same suffix in norm (same length, same
+			// separators — LocalKey only changes case on Windows).
+			suffix := strings.TrimPrefix(normKey, homeKey+"/")
+			origRel := filepath.ToSlash(norm[len(norm)-len(suffix):])
+			return "~/" + origRel
 		}
 	}
 	return norm
@@ -301,12 +306,13 @@ func RemoveItems(cfgPath string, cfg *config.Config, locals []string, all bool, 
 		if all && len(keep) == 0 {
 			g := env.gitRunner()
 			if err := g.WorktreeRemove(env.Worktree); err != nil {
-				env.logf("map %s: worktree remove failed (clean up manually): %v", env.MapRoot, err)
+				env.logf("map %s: worktree remove failed — retire incomplete; run `git -C %s worktree remove --force %s` manually, then `git -C %s branch -D %s`", env.MapRoot, env.GitRoot, env.Worktree, env.GitRoot, BranchName(env.MapRoot))
+			} else {
+				if err := g.DeleteBranch(BranchName(env.MapRoot)); err != nil {
+					env.logf("map %s: branch delete failed (clean up manually): %v", env.MapRoot, err)
+				}
+				env.logf("map %s: all mappings removed; worktree retired — change git-root and run `gnm init` to start fresh", env.MapRoot)
 			}
-			if err := g.DeleteBranch(BranchName(env.MapRoot)); err != nil {
-				env.logf("map %s: branch delete failed (clean up manually): %v", env.MapRoot, err)
-			}
-			env.logf("map %s: all mappings removed; worktree retired — change git-root and run `gnm init` to start fresh", env.MapRoot)
 		} else {
 			env.logf("map %s: %d mapping(s) removed; .syncable removed — review with `gnm status`", env.MapRoot, len(removedDefs))
 		}

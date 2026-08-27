@@ -156,6 +156,10 @@ func applyMappingItem(env *Env, it config.MapItem) error {
 	if err != nil {
 		return err
 	}
+	wtPath, err = env.safeWorktreePath(it, "")
+	if err != nil {
+		return err
+	}
 	lk, wk := kindOf(localAbs), kindOf(wtPath)
 
 	switch {
@@ -203,6 +207,10 @@ func applyMappingItem(env *Env, it config.MapItem) error {
 func removeMappingItem(env *Env, it config.MapItem) error {
 	localAbs := NormalizeLocal(it.LocalPath)
 	wtPath, err := env.worktreePathOf(it)
+	if err != nil {
+		return err
+	}
+	wtPath, err = env.safeWorktreePath(it, "")
 	if err != nil {
 		return err
 	}

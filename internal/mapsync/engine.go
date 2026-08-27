@@ -340,6 +340,10 @@ func convergeIntoWorktree(env *Env, confirmMissing bool) (map[int]copyBaseline, 
 			baselines[i] = copyBaseline{}
 			continue
 		}
+		wtPath, err = env.safeWorktreePath(it, "")
+		if err != nil {
+			return nil, err
+		}
 		if kindOf(localAbs) == kMissing {
 			if confirmMissing && kindOf(wtPath) != kMissing {
 				if err := os.RemoveAll(wtPath); err != nil {
@@ -369,6 +373,10 @@ func deployFromWorktree(env *Env, baselines map[int]copyBaseline) error {
 		wtPath, err := env.worktreePathOf(it)
 		if err != nil {
 			continue
+		}
+		wtPath, err = env.safeWorktreePath(it, "")
+		if err != nil {
+			return err
 		}
 		wk := kindOf(wtPath)
 		if env.LinkMode() {

@@ -128,9 +128,19 @@ func (e *Env) safeWorktreePath(item config.MapItem, rel string) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	// If the final segment is a symlink, only check ancestors — the final
+	// segment is handled by the caller (kindOf/SyncTree use Lstat, not
+	// following symlinks). EvalSymlinks would resolve it outside the
+	// worktree and falsely reject legitimate dotfile symlinks.
+	if kindOf(abs) == kSymlink {
+		if err := checkAncestors(abs, e.Worktree, false); err != nil {
+			return "", err
+		}
+		return abs, nil
+	}
 	// Verify the resolved physical path stays inside the worktree. This
-	// catches symlinks at ANY level (including the final segment) by
-	// resolving all symlinks and comparing prefixes.
+	// catches symlinks at ANY intermediate level by resolving all symlinks
+	// and comparing prefixes.
 	physical, perr := filepath.EvalSymlinks(abs)
 	if perr != nil {
 		// EvalSymlinks failed (including NotExist when a symlink points
@@ -164,12 +174,16 @@ func (e *Env) safeLocalPath(item config.MapItem, rel string, allowRootLink bool)
 	return abs, nil
 }
 
-// checkAncestors verifies that every directory between root and path (exclusive
-// of root, inclusive of path) is not a symlink, unless allowRootLink is true and
-// the symlink IS the root (the managed link-mode entry point).
+// checkAncestors verifies that no intermediate directory between root and
+// path (exclusive of root, inclusive of path) is an unmanaged symlink. The
+// final segment is allowed to be a symlink (callers handle it via kindOf /
+// linkPointsTo); only intermediate segments that would let RemoveAll /
+// SyncTree escape are rejected. The allowRootLink parameter is retained for
+// API compatibility but is a no-op: the root itself is never walked (rel ==
+// "." returns early), and link-mode root symlinks are validated separately
+// by the callers via linkPointsTo.
 func checkAncestors(path, root string, allowRootLink bool) error {
-	rootKey := LocalKey(filepath.Clean(root))
-	// Walk from root downward, lstat each intermediate segment.
+	_ = allowRootLink
 	cur := filepath.Clean(root)
 	rel, err := filepath.Rel(root, filepath.Clean(path))
 	if err != nil {
@@ -193,11 +207,6 @@ func checkAncestors(path, root string, allowRootLink bool) error {
 			return fmt.Errorf("lstat %s: %w", cur, lerr)
 		}
 		if li.Mode()&os.ModeSymlink != 0 {
-			// In link mode the mapping root itself is a managed symlink —
-			// allow it as the sole exception.
-			if allowRootLink && LocalKey(cur) == rootKey {
-				continue
-			}
 			// A symlink at the final segment is fine for read operations
 			// (linkPointsTo), but dangerous for RemoveAll.
 			if isLast {

@@ -184,7 +184,11 @@ func getNode(env *Env, idx int, rel string) error {
 		if err := env.wtRunner().ResetPaths("HEAD", repoRel); err != nil {
 			return err
 		}
-		for _, p := range []string{wtAbs, env.localJoin(it, rel)} {
+		localSafe, lerr := env.safeLocalPath(it, rel, env.LinkMode())
+		if lerr != nil {
+			return lerr
+		}
+		for _, p := range []string{wtAbs, localSafe} {
 			if k := kindOf(p); k == kOther {
 				return &SpecialFileError{p}
 			}
@@ -212,6 +216,9 @@ func getNode(env *Env, idx int, rel string) error {
 	// the root itself was restored from absence. If the root link is missing
 	// (e.g. after pull --mixed), EnsureSymlink it before the early return so
 	// the mapping is actually deployed to local (spec §5.1 get contract).
+	// Don't RemoveAll an unmanaged local root — EnsureSymlink refuses to
+	// replace non-symlink paths, protecting user data. The user should
+	// `gnm add` first to adopt local content, then `gnm get` to rebuild.
 	if env.LinkMode() && rel != "" {
 		localRoot := env.localJoin(it, "")
 		wtRoot, rerr := env.worktreePathOf(it)
@@ -219,16 +226,16 @@ func getNode(env *Env, idx int, rel string) error {
 			return rerr
 		}
 		if !linkPointsTo(localRoot, wtRoot) && kindOf(localRoot) != kOther {
-			if err := os.RemoveAll(localRoot); err != nil {
-				return err
-			}
 			if err := EnsureSymlink(localRoot, wtRoot); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	localAbs := env.localJoin(it, rel)
+	localAbs, lerr := env.safeLocalPath(it, rel, env.LinkMode())
+	if lerr != nil {
+		return lerr
+	}
 	switch kindOf(wtAbs) {
 	case kMissing:
 		return os.RemoveAll(localAbs)
@@ -239,8 +246,10 @@ func getNode(env *Env, idx int, rel string) error {
 		if kindOf(localAbs) == kOther {
 			return &SpecialFileError{localAbs}
 		}
-		if !linkPointsTo(localAbs, wtAbs) {
-			if err := os.RemoveAll(localAbs); err != nil {
+		// Don't RemoveAll an unmanaged local path — EnsureSymlink refuses
+		// to replace non-symlink paths, protecting user data.
+		if !linkPointsTo(localAbs, wtAbs) && kindOf(localAbs) == kSymlink {
+			if err := os.Remove(localAbs); err != nil {
 				return err
 			}
 		}
