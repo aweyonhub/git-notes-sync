@@ -124,6 +124,10 @@ func Cleanup(path string, maxBackups int) error {
 // Contract: the returned file is non-nil whenever the new log opened
 // successfully; the error may then carry only rotate/cleanup warnings.
 // Callers MUST adopt the returned file before inspecting the error.
+//
+// If the reopen fails (disk full, permissions), a fallback sink (the
+// un-rotated path, then os.DevNull) is returned so the process never
+// writes to closed file descriptors.
 func RotateAndReopen(path string, maxSizeKB, maxBackups int, handles ...*os.File) (*os.File, error) {
 	for _, h := range handles {
 		if h != nil {
@@ -140,6 +144,16 @@ func RotateAndReopen(path string, maxSizeKB, maxBackups int, handles ...*os.File
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		errs = append(errs, err)
+		// Fallback 1: reopen without O_CREATE — rotation may have failed
+		// (file not renamed) and the original file is still writable.
+		if f2, err2 := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644); err2 == nil {
+			return f2, errors.Join(errs...)
+		}
+		// Fallback 2: sink to DevNull so the daemon doesn't write to
+		// closed fds. Logging is lost but the process stays alive.
+		if f2, err2 := os.OpenFile(os.DevNull, os.O_WRONLY, 0o644); err2 == nil {
+			return f2, errors.Join(errs...)
+		}
 		return nil, errors.Join(errs...)
 	}
 	return f, errors.Join(errs...)

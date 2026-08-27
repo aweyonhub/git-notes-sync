@@ -75,6 +75,14 @@ func Pull(env *Env, force bool) error {
 	}
 
 	if force {
+		// Mirror the non-force path's clean-status check: --force resets
+		// only tracked history, but uncommitted changes in git-root would
+		// be silently destroyed (backup refs only preserve commits).
+		if entries, serr := g.Status(); serr != nil {
+			return fmt.Errorf("map: inspect git-root: %w", serr)
+		} else if len(entries) > 0 {
+			return errors.New("map: git-root has uncommitted files; commit or clean it before pull --force")
+		}
 		remote, _, ok := g.Upstream()
 		if !ok {
 			return fmt.Errorf("map: git-root branch %q has no upstream to force-align with", branch)

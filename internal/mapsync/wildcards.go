@@ -199,20 +199,25 @@ func unionCandidates(env *Env, item config.MapItem, side gitSide) ([]string, err
 }
 
 // collapseDescendants drops nodes whose ancestor is also selected, so a
-// selected directory is processed once, recursively (spec §5.1). Sorted
-// input makes a single pass sufficient: every descendant of a kept node is
-// adjacent-after it in sort order.
+// selected directory is processed once, recursively (spec §5.1). A node is
+// a descendant of ANY previously kept ancestor, not just the nearest one —
+// comparing only against the last kept node misses parent-child pairs
+// separated by a sibling (e.g. /a, /b, /a/c would fail to drop /a/c).
 func collapseDescendants(rels []string) []string {
 	sorted := append([]string(nil), rels...)
 	sort.Strings(sorted)
 	var kept []string
-	last := ""
 	for _, r := range sorted {
-		if last != "" && within(r, last) {
-			continue // descendant of the nearest kept ancestor
+		isDescendant := false
+		for _, a := range kept {
+			if within(r, a) {
+				isDescendant = true
+				break
+			}
 		}
-		kept = append(kept, r)
-		last = r
+		if !isDescendant {
+			kept = append(kept, r)
+		}
 	}
 	return kept
 }

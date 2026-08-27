@@ -4,6 +4,7 @@
 package mapsync
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -538,8 +539,9 @@ func TestMappingConfigChangeDisarmsGate(t *testing.T) {
 		t.Fatalf("mapping not applied to worktree: %q", got)
 	}
 
-	// remove-all clears every definition, unmaps the machine namespace and
-	// disarms the gate again
+	// remove-all clears every definition, unmaps the machine namespace,
+	// disarms the gate, and retires the worktree (spec §4.5: when the last
+	// mapping is removed the machine returns to pre-init state).
 	if err := RemoveItems(env.ConfigPath, env.Cfg, nil, true, env); err != nil {
 		t.Fatalf("RemoveItems all: %v", err)
 	}
@@ -552,8 +554,9 @@ func TestMappingConfigChangeDisarmsGate(t *testing.T) {
 	if _, err := os.Lstat(mappedWtFile(env)); !os.IsNotExist(err) {
 		t.Fatal("map-root scoped content survived remove-all")
 	}
-	if got := readFile(t, filepath.Join(env.Worktree, "common", "extra.sh")); !strings.Contains(got, "echo hi") {
-		t.Fatal("git-root scoped content must survive remove-all")
+	// worktree is retired: the directory is gone
+	if _, err := os.Lstat(env.Worktree); !os.IsNotExist(err) {
+		t.Fatal("worktree directory survived remove-all (should be retired)")
 	}
 }
 
@@ -729,5 +732,165 @@ func TestConflictPathsSurviveQuotepath(t *testing.T) {
 		if !strings.Contains(c, "测试说明.md") {
 			t.Fatalf("unexpected conflict path: %q", c)
 		}
+	}
+}
+
+// ---------- RunSchedulerTick tests (#5) ----------
+
+// TestSchedulerTickNotInitializedSkip verifies that RunSchedulerTick on a
+// machine that has not run `gnm init` returns nil (silent skip).
+func TestSchedulerTickNotInitializedSkip(t *testing.T) {
+	env, _, _ := newTestEnv(t)
+	env.Cfg.Map.Items = []config.MapItem{
+		{Scope: config.ScopeMapRoot, Path: "dot/file.txt", LocalPath: filepath.Join(t.TempDir(), "f.txt")},
+	}
+	env.Cfg.Map.Sync = true
+	if err := RunSchedulerTick(env.Cfg, func(string, ...any) {}); err != nil {
+		t.Fatalf("RunSchedulerTick on uninitialized machine: %v", err)
+	}
+}
+
+// TestSchedulerTickSyncDisabled verifies that map.sync=false is a no-op.
+func TestSchedulerTickSyncDisabled(t *testing.T) {
+	env, _, _, _ := setupMapped(t, "")
+	armGate(t, env)
+	env.Cfg.Map.Sync = false
+	if err := RunSchedulerTick(env.Cfg, func(string, ...any) {}); err != nil {
+		t.Fatalf("RunSchedulerTick with sync=false: %v", err)
+	}
+}
+
+// TestSchedulerTickArmedSyncs verifies that an armed, initialized machine
+// runs a real sync round via the scheduler entry point.
+func TestSchedulerTickArmedSyncs(t *testing.T) {
+	env, remote, _, _ := setupMapped(t, "")
+	armGate(t, env)
+	env.Cfg.Map.Sync = true
+
+	// push a remote change so sync has something to fast-forward
+	peer := peerClone(t, remote)
+	writeFile(t, filepath.Join(peer, "tm", "dot", "file.txt"), "V1\nremote-v2\n")
+	gitCmd(t, peer, "add", "-A")
+	gitCmd(t, peer, "commit", "-m", "remote change")
+	gitCmd(t, peer, "push")
+
+	// sync should fast-forward (no local change since armGate)
+	if err := RunSchedulerTick(env.Cfg, func(string, ...any) {}); err != nil {
+		t.Fatalf("RunSchedulerTick armed: %v", err)
+	}
+	if !HasSyncable(env) {
+		t.Fatal("sync should preserve .syncable on successful fast-forward")
+	}
+}
+
+// TestSchedulerTickManualRequiredSkip verifies that an initialized but
+// disarmed machine (MANUAL_REQUIRED) skips sync and returns nil.
+func TestSchedulerTickManualRequiredSkip(t *testing.T) {
+	env, _, _, _ := setupMapped(t, "")
+	armGate(t, env)
+	env.Cfg.Map.Sync = true
+
+	// Simulate MANUAL_REQUIRED by removing .syncable directly
+	if err := RemoveSyncable(env); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	if err := RunSchedulerTick(env.Cfg, func(string, ...any) { ran = true }); err != nil {
+		t.Fatalf("RunSchedulerTick MANUAL_REQUIRED: %v", err)
+	}
+	if !ran {
+		t.Fatal("expected log output for MANUAL_REQUIRED skip")
+	}
+}
+
+// ---------- safety tests (#6) ----------
+
+// TestSpecialFileRejectsSync verifies that a special file (FIFO/socket/device)
+// in the mapping root is rejected with SpecialFileError, not silently
+// overwritten or deleted.
+func TestSpecialFileRejectsSync(t *testing.T) {
+	if IsWindows() {
+		t.Skip("special files (FIFO) are POSIX-only")
+	}
+	env, _, local, _ := setupMapped(t, "")
+	armGate(t, env)
+
+	// replace the local file with a FIFO
+	if err := os.Remove(local); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("mkfifo", local).Run(); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+
+	err := Sync(env)
+	if err == nil {
+		t.Fatal("sync should reject special file")
+	}
+	var sfe *SpecialFileError
+	if !errors.As(err, &sfe) {
+		t.Fatalf("expected SpecialFileError, got: %v", err)
+	}
+	if HasSyncable(env) {
+		t.Fatal(".syncable should be removed on special-file block")
+	}
+}
+
+// TestSymlinkNotDereferencedInCopy verifies that SyncTree in copy mode
+// reproduces symlinks as symlinks on the destination side — it must NOT
+// dereference them and copy the target content.
+func TestSymlinkNotDereferencedInCopy(t *testing.T) {
+	probe := filepath.Join(t.TempDir(), "probe-target")
+	writeFile(t, probe, "target-content\n")
+	if err := os.Symlink(probe, probe+".lnk"); err != nil {
+		t.Skip("symlinks unavailable on this platform/account")
+	}
+	os.Remove(probe + ".lnk")
+
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	dst := filepath.Join(tmp, "dst")
+	os.MkdirAll(src, 0o755)
+	// create a symlink inside src
+	if err := os.Symlink(filepath.Join(tmp, "target"), filepath.Join(src, "link")); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+
+	if err := SyncTree(src, dst); err != nil {
+		t.Fatalf("SyncTree: %v", err)
+	}
+	// dst/link must be a symlink, NOT a file with target's content
+	fi, err := os.Lstat(filepath.Join(dst, "link"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("SyncTree dereferenced symlink into a regular file")
+	}
+}
+
+// TestCopyModeRootViolationBlocks verifies that a type mismatch at the
+// mapping root (e.g. local is a file, worktree is a dir) blocks sync
+// instead of blindly deleting the local side.
+func TestCopyModeRootViolationBlocks(t *testing.T) {
+	env, _, local, _ := setupMapped(t, "")
+	armGate(t, env)
+
+	// replace local file with a directory — root type mismatch
+	if err := os.Remove(local); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(local, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(local, "child.txt"), "child\n")
+
+	err := Sync(env)
+	if err == nil {
+		t.Fatal("sync should block on root type mismatch")
+	}
+	// local content must survive
+	if _, err := os.Stat(filepath.Join(local, "child.txt")); err != nil {
+		t.Fatal("local content was deleted despite root violation block")
 	}
 }

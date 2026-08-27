@@ -66,8 +66,8 @@ func ValidateReport(cfg *config.Config) []error {
 			errs = append(errs, fmt.Errorf("item #%d (%s): %v", i+1, it.LocalPath, err))
 			continue
 		}
-		l := NormalizeLocal(it.LocalPath)
-		if !strings.HasPrefix(l, "/") && !filepath.IsAbs(l) && !strings.Contains(l, ":") {
+		raw := strings.TrimSpace(it.LocalPath)
+		if raw != "" && !strings.HasPrefix(raw, "~") && !filepath.IsAbs(raw) {
 			errs = append(errs, fmt.Errorf("item #%d: local path should be absolute or ~/: %s", i+1, it.LocalPath))
 		}
 	}
@@ -157,18 +157,38 @@ func AddItem(cfgPath string, cfg *config.Config, scope, repoPath, local string, 
 	defer unlock()
 	oldItems := append([]config.MapItem(nil), cfg.Map.Items...)
 
+	// Disarm the gate BEFORE writing config: if the process crashes after
+	// the new mapping is on disk but before disarm, the scheduler would run
+	// the new mapping under the still-armed gate, bypassing manual
+	// confirmation (§4.5). On any subsequent failure the gate stays
+	// disarmed — the user must `gnm push` to re-arm after fixing.
+	if env != nil {
+		if err := RemoveSyncable(env); err != nil {
+			return fmt.Errorf("disarm .syncable: %w", err)
+		}
+	}
+
 	f, err := os.OpenFile(cfgPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
+		if env != nil {
+			env.logf("map %s: .syncable removed; fix error then `gnm push` to re-arm", env.MapRoot)
+		}
 		return err
 	}
 	if _, err := f.WriteString(mapItemBlock(item)); err != nil {
 		f.Close()
+		if env != nil {
+			env.logf("map %s: .syncable removed; fix error then `gnm push` to re-arm", env.MapRoot)
+		}
 		return err
 	}
 	if err := f.Close(); err != nil {
+		if env != nil {
+			env.logf("map %s: .syncable removed; fix error then `gnm push` to re-arm", env.MapRoot)
+		}
 		return err
 	}
-	if env != nil { // initialized: apply now and demand re-confirmation (§4.5)
+	if env != nil { // initialized: apply now (§4.5)
 		rollbackConfig := func() error {
 			_, rollbackErr := removeItemBlocksWhere(cfgPath, func(existing config.MapItem) bool {
 				return existing.Scope == item.Scope && existing.Path == item.Path && existing.LocalPath == item.LocalPath
@@ -176,17 +196,11 @@ func AddItem(cfgPath string, cfg *config.Config, scope, repoPath, local string, 
 			cfg.Map.Items = oldItems
 			return rollbackErr
 		}
-		if err := RemoveSyncable(env); err != nil {
-			if rollbackErr := rollbackConfig(); rollbackErr != nil {
-				return fmt.Errorf("disarm .syncable: %w (config rollback failed: %v)", err, rollbackErr)
-			}
-			return fmt.Errorf("disarm .syncable: %w", err)
-		}
 		if err := applyMappingItem(env, item); err != nil {
 			if rollbackErr := rollbackConfig(); rollbackErr != nil {
-				return fmt.Errorf("apply mapping: %w (config rollback failed: %v)", err, rollbackErr)
+				return fmt.Errorf("apply mapping: %w (config rollback failed: %v); .syncable stays disarmed", err, rollbackErr)
 			}
-			return fmt.Errorf("apply mapping: %w", err)
+			return fmt.Errorf("apply mapping: %w; .syncable stays disarmed — push again to re-arm", err)
 		}
 		cfg.Map.Items = append(oldItems, item)
 		env.logf("map %s: mapping applied; .syncable removed — push again to re-arm", env.MapRoot)
@@ -201,15 +215,14 @@ func AddItem(cfgPath string, cfg *config.Config, scope, repoPath, local string, 
 func expandHomeTilde(local string) string {
 	norm := NormalizeLocal(local)
 	if home, err := os.UserHomeDir(); err == nil {
-		home = NormalizeLocal(home)
-		if within(LocalKey(norm), LocalKey(home)) {
-			rel, err := filepath.Rel(home, norm)
-			if err == nil && rel == "." {
+		homeKey := LocalKey(NormalizeLocal(home))
+		normKey := LocalKey(norm)
+		if within(normKey, homeKey) {
+			rel := relUnder(homeKey, normKey)
+			if rel == "" {
 				return "~"
 			}
-			if err == nil {
-				return "~/" + filepath.ToSlash(rel)
-			}
+			return "~/" + rel
 		}
 	}
 	return norm
@@ -283,7 +296,20 @@ func RemoveItems(cfgPath string, cfg *config.Config, locals []string, all bool, 
 	}
 	cfg.Map.Items = keep
 	if env != nil {
-		env.logf("map %s: %d mapping(s) removed; .syncable removed — review with `gnm status`", env.MapRoot, len(removedDefs))
+		// When all mappings are removed, retire the worktree and branch so
+		// the user can switch git-root or re-init cleanly (spec §4.5).
+		if all && len(keep) == 0 {
+			g := env.gitRunner()
+			if err := g.WorktreeRemove(env.Worktree); err != nil {
+				env.logf("map %s: worktree remove failed (clean up manually): %v", env.MapRoot, err)
+			}
+			if err := g.DeleteBranch(BranchName(env.MapRoot)); err != nil {
+				env.logf("map %s: branch delete failed (clean up manually): %v", env.MapRoot, err)
+			}
+			env.logf("map %s: all mappings removed; worktree retired — change git-root and run `gnm init` to start fresh", env.MapRoot)
+		} else {
+			env.logf("map %s: %d mapping(s) removed; .syncable removed — review with `gnm status`", env.MapRoot, len(removedDefs))
+		}
 	}
 	return nil
 }
@@ -403,11 +429,11 @@ func LoadSnapshot(cfgPath string, cfg *config.Config, mapRootArg string, logf fu
 	if effective == "" {
 		effective = cfg.Map.MapRoot
 	}
-	if err := ValidMapRoot(effective); err != nil {
-		return err
-	}
 	if effective == "" {
 		return errors.New("no map-root given and none configured; run `gnm config map-root <name>`")
+	}
+	if err := ValidMapRoot(effective); err != nil {
+		return err
 	}
 	g := newRunner(NormalizeLocal(cfg.Map.GitRoot), cfg)
 	blob, err := g.ShowHeadFile(SnapshotRel(effective))

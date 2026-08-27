@@ -73,6 +73,13 @@ func validateRepoRel(item config.MapItem) (string, error) {
 	if clean == "" || clean == "." {
 		return "", fmt.Errorf("empty repo path")
 	}
+	// Reject backslashes: on POSIX they are ordinary filename characters,
+	// but on Windows they act as path separators — the same repo path would
+	// resolve to different directory trees on different machines, breaking
+	// snapshot portability and cross-machine mapping integrity.
+	if strings.Contains(item.Path, `\`) {
+		return "", fmt.Errorf("repo path must not contain backslash (use / on all platforms): %q", item.Path)
+	}
 	if filepath.IsAbs(item.Path) || filepath.VolumeName(item.Path) != "" || strings.HasPrefix(clean, "/") ||
 		clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
 		return "", fmt.Errorf("repo path must be relative without %q: %q", "..", item.Path)

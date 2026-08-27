@@ -245,7 +245,10 @@ func writeKeyValue(cfgPath, section, key, encoded string) error {
 		if err := ensureFile(cfgPath); err != nil {
 			return err
 		}
-		content = []byte{}
+		content, err = os.ReadFile(cfgPath) // pick up the header ensureFile wrote
+		if err != nil {
+			return err
+		}
 	}
 	lines := strings.Split(string(content), "\n")
 

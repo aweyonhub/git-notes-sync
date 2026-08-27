@@ -473,6 +473,12 @@ func ReplaceLocalWithLink(localAbs, wtPath string, syncFn func() error) error {
 	}
 	if syncFn != nil {
 		if err := syncFn(); err != nil {
+			// Roll back the worktree to its pre-sync state: syncFn may have
+			// left a half-converged worktree. §6.3 requires the worktree to
+			// be whole before any recovery operation.
+			if wtKind := kindOf(wtPath); wtKind != kMissing && wtKind != kOther {
+				_ = os.RemoveAll(wtPath)
+			}
 			return fmt.Errorf("copy into worktree: %w", err)
 		}
 	}

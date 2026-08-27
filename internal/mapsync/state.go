@@ -118,6 +118,98 @@ func (e *Env) localJoin(item config.MapItem, rel string) string {
 	return filepath.Join(base, filepath.FromSlash(rel))
 }
 
+// safeWorktreePath returns a worktree-side path after verifying that no
+// intermediate ancestor is an unmanaged symlink that would let RemoveAll /
+// SyncTree escape the worktree. The mapping root itself (the first segment
+// after Worktree) is allowed to be a directory or, in link mode, a managed
+// symlink — those are the expected entry points.
+func (e *Env) safeWorktreePath(item config.MapItem, rel string) (string, error) {
+	abs, _, err := e.worktreeJoin(item, rel)
+	if err != nil {
+		return "", err
+	}
+	// Verify the resolved physical path stays inside the worktree. This
+	// catches symlinks at ANY level (including the final segment) by
+	// resolving all symlinks and comparing prefixes.
+	physical, perr := filepath.EvalSymlinks(abs)
+	if perr != nil && !os.IsNotExist(perr) {
+		// Lstat-based fallback: walk ancestors manually.
+		if err := checkAncestors(abs, e.Worktree, false); err != nil {
+			return "", err
+		}
+	}
+	if perr == nil {
+		wtPhysical, _ := filepath.EvalSymlinks(e.Worktree)
+		if wtPhysical == "" {
+			wtPhysical = e.Worktree
+		}
+		if !within(LocalKey(physical), LocalKey(wtPhysical)) {
+			return "", fmt.Errorf("path escapes worktree via symlink: %s -> %s", abs, physical)
+		}
+	}
+	return abs, nil
+}
+
+// safeLocalPath returns a local-side path after verifying that no intermediate
+// ancestor (between the mapping root and the final path) is an unmanaged
+// symlink. allowRootLink=true (link mode) permits the mapping root itself to
+// be a managed symlink pointing at the worktree.
+func (e *Env) safeLocalPath(item config.MapItem, rel string, allowRootLink bool) (string, error) {
+	abs := e.localJoin(item, rel)
+	if err := checkAncestors(abs, NormalizeLocal(item.LocalPath), allowRootLink); err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+// checkAncestors verifies that every directory between root and path (exclusive
+// of root, inclusive of path) is not a symlink, unless allowRootLink is true and
+// the symlink IS the root (the managed link-mode entry point).
+func checkAncestors(path, root string, allowRootLink bool) error {
+	rootKey := LocalKey(filepath.Clean(root))
+	// Walk from root downward, lstat each intermediate segment.
+	cur := filepath.Clean(root)
+	rel, err := filepath.Rel(root, filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("path relation: %w", err)
+	}
+	if rel == "." {
+		return nil // path == root
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	for i, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		isLast := i == len(parts)-1
+		li, lerr := os.Lstat(cur)
+		if lerr != nil {
+			if os.IsNotExist(lerr) {
+				return nil // missing path has no symlink to traverse
+			}
+			return fmt.Errorf("lstat %s: %w", cur, lerr)
+		}
+		if li.Mode()&os.ModeSymlink != 0 {
+			// In link mode the mapping root itself is a managed symlink —
+			// allow it as the sole exception.
+			if allowRootLink && LocalKey(cur) == rootKey && !isLast {
+				continue
+			}
+			if allowRootLink && isLast && LocalKey(cur) == rootKey {
+				continue
+			}
+			// A symlink at the final segment is fine for read operations
+			// (linkPointsTo), but dangerous for RemoveAll.
+			if isLast {
+				continue // final segment handled by caller (kindOf/linkPointsTo)
+			}
+			return fmt.Errorf("refusing to traverse unmanaged symlink: %s", cur)
+		}
+	}
+	return nil
+}
+
 // headRels lists HEAD-tracked node paths under one mapping's repo subtree,
 // relative to that mapping root ("" excluded).
 func (e *Env) headRels(item config.MapItem) ([]string, error) {
@@ -199,6 +291,35 @@ func canonicalDir(p string) string {
 }
 
 func ensureStateDir(env *Env) error { return os.MkdirAll(env.State, 0o755) }
+
+// WorktreeOwnedBy checks whether a worktree exists for the given map-root
+// and belongs to the given git-root — without requiring valid mapping items.
+// Used by `config load` to prevent overwriting an initialized machine even
+// when ResolveEnv fails on invalid items (spec §4.6, plan B).
+func WorktreeOwnedBy(mapRoot, gitRoot string, cfg *config.Config) (owned bool, err error) {
+	if err := ValidMapRoot(mapRoot); err != nil {
+		return false, nil
+	}
+	if gitRoot == "" {
+		return false, nil
+	}
+	wtDir := WorktreeDir(mapRoot)
+	if _, err := os.Stat(filepath.Join(wtDir, ".git")); err != nil {
+		return false, nil // no worktree
+	}
+	w := newRunner(wtDir, cfg)
+	common, err := w.Out("rev-parse", "--git-common-dir")
+	if err != nil {
+		return false, fmt.Errorf("inspect worktree %s: %w", wtDir, err)
+	}
+	commonAbs := NormalizeLocal(common)
+	rr := canonicalDir(gitRoot)
+	if !strings.HasPrefix(LocalKey(commonAbs), LocalKey(rr)+"/") &&
+		LocalKey(commonAbs) != LocalKey(rr) {
+		return false, fmt.Errorf("%w: %s belongs to %s", ErrWorktreeBroken, wtDir, commonAbs)
+	}
+	return true, nil
+}
 
 // ---------- .syncable gate ----------
 
@@ -290,8 +411,7 @@ func ReadBlocked(env *Env) (*BlockedState, error) {
 	return &b, nil
 }
 
-// ClearBlocked drops the record once a manual push succeeded.
-// ClearBlocked drops the record once recovery succeeded. A missing record
+// ClearBlocked drops the record once a manual push succeeded. A missing record
 // is a successful no-op; other failures surface to the caller.
 func ClearBlocked(env *Env) error {
 	if err := os.Remove(BlockedPath(env)); err != nil && !os.IsNotExist(err) {

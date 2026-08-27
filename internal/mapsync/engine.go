@@ -133,6 +133,18 @@ func runChain(env *Env, auto bool) error {
 
 	// step 4: one local→worktree pass. In copy mode it also collects the
 	// metadata used to guard the later deploy, avoiding separate TOCTOU scans.
+	// Push (non-auto) requires a clean worktree first: converging into an
+	// already-dirty worktree leaves a half-converged state the user must
+	// untangle (spec §7.2).
+	if !auto {
+		preDirty, derr := wtHasChanges(w)
+		if derr != nil {
+			return derr
+		}
+		if preDirty {
+			return errors.New("map: worktree has uncommitted changes; run `gnm add -A`, `gnm commit`, then `gnm push`")
+		}
+	}
 	baselines, err := convergeIntoWorktree(env, false)
 	if err != nil {
 		return classifySpecial(env, err)
@@ -157,9 +169,16 @@ func runChain(env *Env, auto bool) error {
 		if uerr == nil && len(unmerged) > 0 {
 			abortErr := w.MergeAbort()
 			primary := fmt.Errorf("map: merge conflict in %d file(s); run `gnm pull`, choose with `gnm add|get`, commit, then push", len(unmerged))
+			detail := "worktree merge git-root conflicted"
+			if abortErr != nil {
+				// Persist the abort failure so status can route the user to
+				// `git merge --abort` instead of `gnm pull` (which refuses an
+				// in-progress merge, causing a dead loop).
+				detail = "worktree merge git-root conflicted; abort failed: " + abortErr.Error()
+			}
 			primary = blockAndStop(env, &BlockedState{
 				Reason:    "merge-conflict",
-				Detail:    "worktree merge git-root conflicted",
+				Detail:    detail,
 				Conflicts: unmerged,
 				GitHead:   g.Head(),
 			}, primary)

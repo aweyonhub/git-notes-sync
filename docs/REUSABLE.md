@@ -17,8 +17,9 @@
 | **STATUS** | 已完成/待办/踩坑记录（可信历史） | `doc/STATUS.md` | 确认内容、已完成、待办、**踩坑记录表**（现象/根因/修复） |
 | **USAGE** | 使用文档（命令/配置/FAQ，只讲用法不写实现） | `doc/USAGE.md` | 安装、命令详解、配置表、定时调度、FAQ、**卸载章节** |
 | **SKILL.md** | AI 读的"项目使用手册"（代替每次重读文档） | `skills/git-notes-sync/SKILL.md` | frontmatter(name/description) + 功能/安装/命令/配置/FAQ |
+| **REVIEW.md** | code review 归档索引与格式规范 | `doc/review/REVIEW.md` | 命名 `<branch>-<commit>.md`；结构：元信息 → 优先级 P0–P3 → 问题清单汇总表 → 汇总结论 |
 
-**复用步骤**：新项目先建 AGENTS.md（2~3 条硬约束）+ spec 决策表 + STATUS 空模板 + USAGE 骨架；功能完成一节填一节，踩坑同步进 STATUS。SKILL 在功能稳定后从 USAGE 提炼。
+**复用步骤**：新项目先建 AGENTS.md（2~3 条硬约束）+ spec 决策表 + STATUS 空模板 + USAGE 骨架；功能完成一节填一节，踩坑同步进 STATUS。SKILL 在功能稳定后从 USAGE 提炼。每轮 review 在 `doc/review/` 产出一份归档，REVIEW.md 维护索引。
 
 ---
 

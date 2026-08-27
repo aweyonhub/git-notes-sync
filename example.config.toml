@@ -66,6 +66,11 @@ retry_attempts = 3            # fetch/push retries (exponential backoff;
 git_timeout = 120             # per git command deadline, seconds (0 = no
                               # timeout, not recommended; 1-4 clamp to 5)
 
+# ---- log rotation (global config only; daemon --log) -----------------
+# [log]
+# max_size_kb = 500            # rotate when the log exceeds this size (KB)
+# max_backups = 3              # number of historical .N copies to keep
+
 # 多仓库列表（daemon / gns sync-all 使用；两种写法等价）：
 # 写法一：简单数组（显示名 = 路径）
 # repos = ["~/notes", "~/work/wiki"]

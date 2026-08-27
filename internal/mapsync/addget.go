@@ -106,11 +106,21 @@ func addNode(env *Env, idx int, rel string) error {
 	it := env.Cfg.Map.Items[idx]
 	localAbs := NormalizeLocal(it.LocalPath)
 	if rel != "" {
-		localAbs = env.localJoin(it, rel)
+		var err error
+		localAbs, err = env.safeLocalPath(it, rel, env.LinkMode())
+		if err != nil {
+			return err
+		}
 	}
 	wtAbs, repoRel, err := env.worktreeJoin(it, rel)
 	if err != nil {
 		return err
+	}
+	// Validate the worktree path doesn't escape via symlink before any delete.
+	if wtSafe, werr := env.safeWorktreePath(it, rel); werr != nil {
+		return werr
+	} else {
+		wtAbs = wtSafe
 	}
 	switch kindOf(localAbs) {
 	case kOther:
@@ -126,7 +136,22 @@ func addNode(env *Env, idx int, rel string) error {
 			}
 		}
 	default:
-		if !env.LinkMode() {
+		if env.LinkMode() && rel == "" {
+			// Link mode: the local root should be a managed symlink to the
+			// worktree. If it's been replaced by a real file/dir (recovery
+			// scenario), adopt the local content into the worktree so `gnm
+			// add` actually publishes the user's version, then the caller
+			// (mutateSelected/ReplaceLocalWithLink) rebuilds the symlink.
+			wtRoot, rerr := env.worktreePathOf(it)
+			if rerr != nil {
+				return rerr
+			}
+			if !linkPointsTo(localAbs, wtRoot) {
+				if err := SyncTree(localAbs, wtAbs); err != nil {
+					return err
+				}
+			}
+		} else if !env.LinkMode() {
 			if err := SyncTree(localAbs, wtAbs); err != nil {
 				return err
 			}
@@ -143,6 +168,12 @@ func getNode(env *Env, idx int, rel string) error {
 	if err != nil {
 		return err
 	}
+	// Validate worktree path doesn't escape via symlink before any delete.
+	wtSafe, werr := env.safeWorktreePath(it, rel)
+	if werr != nil {
+		return werr
+	}
+	wtAbs = wtSafe
 
 	inHead, err := env.headContains(repoRel)
 	if err != nil {
@@ -178,8 +209,23 @@ func getNode(env *Env, idx int, rel string) error {
 	}
 
 	// deploy to local: link mode is covered by the root symlink, except when
-	// the root itself was restored from absence
+	// the root itself was restored from absence. If the root link is missing
+	// (e.g. after pull --mixed), EnsureSymlink it before the early return so
+	// the mapping is actually deployed to local (spec §5.1 get contract).
 	if env.LinkMode() && rel != "" {
+		localRoot := env.localJoin(it, "")
+		wtRoot, rerr := env.worktreePathOf(it)
+		if rerr != nil {
+			return rerr
+		}
+		if !linkPointsTo(localRoot, wtRoot) && kindOf(localRoot) != kOther {
+			if err := os.RemoveAll(localRoot); err != nil {
+				return err
+			}
+			if err := EnsureSymlink(localRoot, wtRoot); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	localAbs := env.localJoin(it, rel)

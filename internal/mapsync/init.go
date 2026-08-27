@@ -101,6 +101,7 @@ type initItem struct {
 
 func rollbackInit(env *Env, g *git.Runner, branch string, applied []initItem) error {
 	var first error
+	keepWorktree := false // true if copy-back failed: keep worktree for recovery
 	for i := len(applied) - 1; i >= 0; i-- {
 		entry := applied[i]
 		local := NormalizeLocal(entry.item.LocalPath)
@@ -112,16 +113,31 @@ func rollbackInit(env *Env, g *git.Runner, branch string, applied []initItem) er
 			continue
 		}
 		if env.LinkMode() && linkPointsTo(local, wt) {
-			_ = os.Remove(local)
+			// Copy real content back BEFORE removing the managed link:
+			// if copy-back fails the link+worktree are the only surviving
+			// copy and must not be destroyed (spec §6.3).
 			if entry.localExisted {
-				err = SyncTree(wt, local)
+				if cerr := SyncTree(wt, local); cerr != nil {
+					if first == nil {
+						first = fmt.Errorf("rollback %s: copy-back: %w", local, cerr)
+					}
+					keepWorktree = true
+					continue
+				}
 			}
+			_ = os.Remove(local)
 		} else if !entry.localExisted {
 			err = os.RemoveAll(local)
 		}
 		if err != nil && first == nil {
 			first = err
 		}
+	}
+	if keepWorktree {
+		if first == nil {
+			first = errors.New("rollback incomplete: copy-back failed; worktree kept for manual recovery")
+		}
+		return first
 	}
 	if err := g.WorktreeRemove(env.Worktree); err != nil && first == nil {
 		first = err
@@ -234,9 +250,14 @@ func removeMappingItem(env *Env, it config.MapItem) error {
 			return fmt.Errorf("mapping applied; remove stashed link %s manually: %w", stashed, err)
 		}
 	}
-	if it.Scope == config.ScopeMapRoot && wk != kMissing {
-		if err := os.RemoveAll(wtPath); err != nil {
-			return err
+	if it.Scope == config.ScopeMapRoot {
+		if wk == kOther {
+			return &SpecialFileError{wtPath}
+		}
+		if wk != kMissing {
+			if err := os.RemoveAll(wtPath); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

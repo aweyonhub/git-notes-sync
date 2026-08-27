@@ -124,6 +124,10 @@ func cmdErr(args []string, stderr string, err error) error {
 func (r *Runner) Out(args ...string) (string, error) {
 	out, stderr, err := r.run(args...)
 	if err != nil {
+		var ce *CmdError
+		if errors.As(err, &ce) {
+			return "", ce // already wrapped (e.g. timeout) — don't double-wrap
+		}
 		return "", cmdErr(args, stderr, err)
 	}
 	return strings.TrimSpace(out), nil
@@ -133,6 +137,10 @@ func (r *Runner) Out(args ...string) (string, error) {
 func (r *Runner) OutErr(args ...string) (string, string, error) {
 	out, stderr, err := r.run(args...)
 	if err != nil {
+		var ce *CmdError
+		if errors.As(err, &ce) {
+			return strings.TrimSpace(out), strings.TrimSpace(stderr), ce
+		}
 		return strings.TrimSpace(out), strings.TrimSpace(stderr), cmdErr(args, stderr, err)
 	}
 	return strings.TrimSpace(out), strings.TrimSpace(stderr), nil

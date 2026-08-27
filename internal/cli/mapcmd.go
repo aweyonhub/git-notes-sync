@@ -436,6 +436,25 @@ func cmdMapConfig(args []string) error {
 			if initd {
 				return errors.New("worktree already initialized; use `gnm config add/remove` instead")
 			}
+		} else {
+			// ResolveEnv failed. Plan B: only tolerate "nothing configured yet"
+			// (git_root or map_root empty). If both are set, still check
+			// worktree ownership independently — an initialized machine with
+			// bad items must not be overwritten by load.
+			if cfg.Map.GitRoot != "" && cfg.Map.MapRoot != "" {
+				mr := cfg.Map.MapRoot
+				if len(args) == 1 {
+					mr = args[0]
+				}
+				owned, oerr := mapsync.WorktreeOwnedBy(mr, mapsync.NormalizeLocal(cfg.Map.GitRoot), cfg)
+				if oerr != nil {
+					return fmt.Errorf("map: %w (resolve it before loading a snapshot)", oerr)
+				}
+				if owned {
+					return errors.New("worktree already initialized; use `gnm config add/remove` instead")
+				}
+				// Not owned — allow load to overwrite the bad config.
+			}
 		}
 		var mr string
 		if len(args) == 1 {
