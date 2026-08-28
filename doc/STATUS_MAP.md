@@ -80,3 +80,14 @@ mapsync 集成测试会创建真实 bare remote、clone 和 Git worktree，并�
 - map 不创建仓库、不选择固定主分支、不替用户决定远程或复杂 Git 历史；
 - map 不实现 watcher，也不单独实现 daemon 或定时任务。
 - `gnm status` 是显式执行的诊断命令，允许按映射查询 HEAD；普通同步链路不为此维护额外缓存。
+
+## 五、待修复问题（P0）
+
+| # | 问题 | 位置 | 说明 |
+|---|------|------|------|
+| 1 | `gnm status` 的 Next 提示在 `add` 之后不更新 | `status.go:257-308` | `nextSteps` 的 `MANUAL_REQUIRED` 分支笼统提示 "gnm add <path> or gnm get <path>"，未根据「已有 staged 内容 + 剩余未选择映射」更新。用户 `gnm add <path>` 后提示无变化：不提示 `gnm commit`（已暂存可提交）、不提示 `gnm add -A`（一次性选择所有剩余映射）。 |
+| 2 | mappings 列表的映射关系显示不清晰 + note 不提示具体 add/get | `status.go:157-177`、`engine.go:265-313` | 两个子问题：(a) 只显示 `[map-root → vip-desktop/]`，未拼入 repo path（如 `ai/dsh-skills`），看不出最终仓库路径——应显示完整路径：map-root scope 显示 `[map-root → vip-desktop/ai/dsh-skills]`，git-root scope 显示 `[git-root → common/xxx]`；(b) 每行的 note 只有笼统的 `NEEDS CHOICE`，未提示具体该 `add`（采用本机）还是 `get`（采用 HEAD）——而 `rootViolations` 已生成详细建议（"only on this machine → gnm add"、"missing locally → gnm get"、"type differs → add|get" 等），只是没整合进 mappings 列表。应在每行直接给出 need add / need get 的下一步提示。 |
+| 3 | map 映射 ignore 规则（P2 升级） | `configops.go` / `fsops.go` | 映射目录时按规则忽略子项——如 `.codex/skills` 里的 `.system`（系统内置 skill）不映射，只同步 `vip-token-pi` 等自定义项。`[[map.items]]` 增加 ignore 字段（glob，类 `.gitignore`）；copy/link 模式 SyncTree 遍历与删除传播跳过匹配项；`gnm status` 对忽略项不报差异。 |
+| 4 | `gnm status` 的 dirty 只显示计数、不列出具体文件 | `status.go:117-121` | worktree 行只显示 `dirty=true staged=0 unstaged=1 untracked=0`，未列出具体哪些文件 dirty。用户不知道要对哪个文件执行 `gnm add/get`（如 pull 后 `.gitignore` 是 unstaged，但 status 不显示文件名）。应列出 dirty 的具体文件路径（类似 `git status --short` 的文件清单），并给每个文件标注下一步。 |
+| 5 | `gnm add/get` 无法操作非映射文件（`.gitignore`、`.gns` 快照） | `model.go:202-218`（`findOwningItem`） | 当 worktree 里有非映射文件的差异（如 pull 后 `.gitignore`、`.gns/map/*.toml` 快照），`gnm get .gitignore` 报 "is not within any configured mapping"，用户无法精确 add/get。只有 `gnm add -A`（`git add -A`）能暂存它们（采用 worktree 当前版本），但没有"采用 HEAD 版本"的途径。应支持对 worktree 内非映射文件的 add/get，或给出明确的解决指引。 |
+

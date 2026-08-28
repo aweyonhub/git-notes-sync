@@ -145,6 +145,14 @@ gnm push
 
 第一次 `gnm push` 完整成功后才创建 `.syncable`，允许自动同步。
 
+最后，开启调度器中的 map 自动同步（初始化的最后一步）：
+
+```bash
+gns config set map.sync true
+```
+
+开启后，现有的 daemon / cron / systemd timer / launchd / Windows 任务计划会在每轮调度时额外执行一次 `gns map sync`，无需单独安装 map 调度任务（详见 §5.3）。
+
 ## 5. 日常命令
 
 ### 5.1 查看状态

@@ -251,6 +251,9 @@ gnm add -A                     # 所有映射采用本机版本
 # 或 gnm get ~/.bashrc         # 采用 HEAD 版本
 gnm commit -m "initialize map"
 gnm push                       # 首次成功后创建 .syncable
+
+# 5. 开启自动同步（初始化的最后一步）
+gns config set map.sync true   # 现有调度器每轮额外执行 gns map sync
 ```
 
 ### 4.6 日常命令
