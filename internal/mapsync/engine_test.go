@@ -495,6 +495,22 @@ func TestStatusRendersStatesAndHints(t *testing.T) {
 			t.Fatalf("status missing %q:\n%s", want, out)
 		}
 	}
+	if err := Add(env, []string{local}, false); err != nil {
+		t.Fatalf("stage initial mapping: %v", err)
+	}
+	out, err = Status(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"[TO commit]", "Next: gnm commit"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status missing staged progress %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "[TO commit]"); n < 2 {
+		t.Fatalf("status should mark both mapping and staged change TO commit, got %d:\n%s", n, out)
+	}
+
 	armGate(t, env)
 	out, err = Status(env)
 	if err != nil {
@@ -504,6 +520,71 @@ func TestStatusRendersStatesAndHints(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status missing %q:\n%s", want, out)
 		}
+	}
+
+	// Mapped changes lead with the exact local path accepted by add/get; the
+	// worktree-relative path is explanatory metadata only.
+	writeFile(t, mappedWtFile(env), "changed directly in worktree\n")
+	out, err = Status(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantChange := NormalizeLocal(local) + "  [repo: tm/dot/file.txt]  [TO add OR get]"
+	if !strings.Contains(out, wantChange) {
+		t.Fatalf("status missing actionable mapped change %q:\n%s", wantChange, out)
+	}
+	if err := Get(env, []string{local}, false); err != nil {
+		t.Fatalf("restore mapped worktree change: %v", err)
+	}
+
+	// A normal staged modification has matching local/HEAD node kinds, but the
+	// mapping row must still expose its index progress.
+	writeFile(t, local, "staged local modification\n")
+	if err := Add(env, []string{local}, false); err != nil {
+		t.Fatalf("stage mapped modification: %v", err)
+	}
+	out, err = Status(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out, "[TO commit]"); n < 2 {
+		t.Fatalf("staged modification missing mapping-level commit marker (count=%d):\n%s", n, out)
+	}
+	if err := Get(env, []string{local}, false); err != nil {
+		t.Fatalf("restore staged mapped modification: %v", err)
+	}
+
+	// A non-mapped path remains worktree-relative and explicitly marked other.
+	gitignore := filepath.Join(env.Worktree, ".gitignore")
+	writeFile(t, gitignore, "# local\n")
+	out, err = Status(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := ".gitignore  [other]  [TO add]"; !strings.Contains(out, want) {
+		t.Fatalf("status missing non-mapped change %q:\n%s", want, out)
+	}
+	if err := Get(env, []string{".gitignore"}, false); err != nil {
+		t.Fatalf("remove non-mapped file absent from HEAD: %v", err)
+	}
+
+	// Staged deletion is a completed choice even though local and HEAD kinds
+	// remain different until commit.
+	if err := os.Remove(local); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(env, []string{local}, false); err != nil {
+		t.Fatalf("stage mapped deletion: %v", err)
+	}
+	out, err = Status(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out, "[TO commit]"); n < 2 || strings.Contains(out, "[TO get]") {
+		t.Fatalf("staged deletion did not advance mapping to commit (count=%d):\n%s", n, out)
+	}
+	if err := Get(env, []string{local}, false); err != nil {
+		t.Fatalf("restore mapped deletion: %v", err)
 	}
 
 	writeFile(t, local, "changed outside the worktree\n")

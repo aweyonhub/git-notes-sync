@@ -166,14 +166,17 @@ func Status(env *Env) (string, error) {
 			hk = headKind(w, it, env.MapRoot)
 		}
 		match := mappingKindsMatch(env, it, lk, hk)
-		if !match && !(lk == kMissing && hk == kMissing) {
+		progress := mappingProgressFor(wtEntries, it, env.MapRoot)
+		commitReady := progress.staged && !progress.remaining
+		if !commitReady && ((!match && !(lk == kMissing && hk == kMissing)) ||
+			(progress.staged && progress.remaining)) {
 			pendingChoices = append(pendingChoices, it.LocalPath)
 		}
-		rows = append(rows, buildMapRow(it, lk, hk, match))
+		rows = append(rows, buildMapRow(it, lk, hk, match, progress))
 	}
 	b.WriteString(renderMapRows(rows))
 	for _, e := range wtEntries {
-		if len(e.Status) > 0 && e.Status[0] != ' ' {
+		if e.Status != "??" && len(e.Status) > 0 && e.Status[0] != ' ' {
 			hasStaged = true
 			break
 		}
@@ -195,11 +198,10 @@ func renderChanges(env *Env, entries []git.Entry) string {
 	var b strings.Builder
 	b.WriteString("\nchanges:\n")
 	for _, e := range entries {
-		b.WriteString("  " + e.Path)
-		if owner := changeOwner(env, e.Path); owner != "" {
-			b.WriteString("  [" + owner + "]")
+		if local, ok := mappedLocalPathForRepo(env, e.Path); ok {
+			b.WriteString("  " + local + "  [repo: " + e.Path + "]")
 		} else {
-			b.WriteString("  [other]")
+			b.WriteString("  " + e.Path + "  [other]")
 		}
 		if action := changeAction(e.Status); action != "" {
 			b.WriteString("  [" + action + "]")
@@ -209,19 +211,25 @@ func renderChanges(env *Env, entries []git.Entry) string {
 	return b.String()
 }
 
-// changeOwner maps a worktree-relative repo path to the local path of the
-// mapping that owns it, or "" when it is not under any mapping.
-func changeOwner(env *Env, repoPath string) string {
+// mappedLocalPathForRepo converts a mapped worktree-relative path into the
+// exact local path accepted by gnm add/get. Non-mapped paths return false.
+func mappedLocalPathForRepo(env *Env, repoPath string) (string, bool) {
 	for _, it := range env.Cfg.Map.Items {
 		rp, err := RepoPathOf(it, env.MapRoot)
 		if err != nil {
 			continue
 		}
-		if repoPath == rp || strings.HasPrefix(repoPath, rp+"/") {
-			return it.LocalPath
+		rel, ok := repoRelUnder(repoPath, rp)
+		if !ok {
+			continue
 		}
+		local := NormalizeLocal(it.LocalPath)
+		if rel != "" {
+			local = filepath.Join(local, filepath.FromSlash(rel))
+		}
+		return local, true
 	}
-	return ""
+	return "", false
 }
 
 // changeAction maps a porcelain XY status to a recommended [TO …] marker:
@@ -230,7 +238,12 @@ func changeAction(status string) string {
 	if status == "??" {
 		return "TO add"
 	}
-	if len(status) > 0 && status[0] != ' ' {
+	staged := len(status) > 0 && status[0] != ' '
+	remaining := len(status) > 1 && status[1] != ' '
+	if staged && remaining {
+		return "TO add OR get"
+	}
+	if staged {
 		return "TO commit"
 	}
 	return "TO add OR get"
@@ -285,18 +298,70 @@ type mapRow struct {
 	op    string // [TO …] recommendation (or [empty])
 }
 
+// mapProgress is the index/worktree progress under one mapping root. staged
+// means the user has selected at least one change; remaining means there are
+// also unstaged or untracked changes that still need a choice.
+type mapProgress struct {
+	staged    bool
+	remaining bool
+}
+
+func mappingProgressFor(entries []git.Entry, item config.MapItem, mapRoot string) mapProgress {
+	rp, err := RepoPathOf(item, mapRoot)
+	if err != nil {
+		return mapProgress{}
+	}
+	var p mapProgress
+	for _, e := range entries {
+		if _, ok := repoRelUnder(e.Path, rp); !ok {
+			continue
+		}
+		if e.Status == "??" {
+			p.remaining = true
+			continue
+		}
+		if len(e.Status) > 0 && e.Status[0] != ' ' {
+			p.staged = true
+		}
+		if len(e.Status) > 1 && e.Status[1] != ' ' {
+			p.remaining = true
+		}
+	}
+	return p
+}
+
+// repoRelUnder returns path relative to root when path is root itself or a
+// descendant. Git status may append '/' to an untracked directory, so both
+// values are normalized to slash form without a trailing separator first.
+func repoRelUnder(path, root string) (string, bool) {
+	path = strings.TrimSuffix(filepath.ToSlash(path), "/")
+	root = strings.TrimSuffix(filepath.ToSlash(root), "/")
+	if path == root {
+		return "", true
+	}
+	if strings.HasPrefix(path, root+"/") {
+		return strings.TrimPrefix(path, root+"/"), true
+	}
+	return "", false
+}
+
 // buildMapRow computes the columns of one mapping row.
-func buildMapRow(item config.MapItem, lk, hk entryKind, match bool) mapRow {
+func buildMapRow(item config.MapItem, lk, hk entryKind, match bool, progress mapProgress) mapRow {
 	scope := "(git-root)"
 	if item.Scope == config.ScopeMapRoot {
 		scope = "(map-root)"
 	}
 	r := mapRow{local: item.LocalPath, scope: scope, repo: item.Path}
-	if !match {
+	commitReady := progress.staged && !progress.remaining
+	if !match && !commitReady {
 		r.lk = "[" + kindName(lk) + "]"
 		r.hk = "[" + kindName(hk) + "]"
 	}
 	switch {
+	case commitReady:
+		r.op = "[TO commit]"
+	case progress.staged && progress.remaining:
+		r.op = "[TO add OR get]"
 	case lk == kMissing && hk == kMissing:
 		r.op = "[empty]"
 	case !match && lk == kMissing:

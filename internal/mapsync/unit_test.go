@@ -12,7 +12,78 @@ import (
 	"time"
 
 	"github.com/aweyonhub/git-notes-sync/internal/config"
+	"github.com/aweyonhub/git-notes-sync/internal/git"
 )
+
+func TestMappingProgressDrivesMapRow(t *testing.T) {
+	item := config.MapItem{Scope: config.ScopeMapRoot, Path: "dot/file.txt", LocalPath: "/home/u/file.txt"}
+
+	// A completed selection hides the stale local↔HEAD kind difference and
+	// reports the next mapping-level action directly.
+	progress := mappingProgressFor([]git.Entry{{Status: "A ", Path: "tm/dot/file.txt"}}, item, "tm")
+	row := buildMapRow(item, kFile, kMissing, false, progress)
+	if row.op != "[TO commit]" || row.lk != "" || row.hk != "" {
+		t.Fatalf("completed staged row = %+v, want TO commit without stale kind columns", row)
+	}
+
+	// A normal staged modification also needs mapping-level progress even
+	// though the local and HEAD node kinds already match.
+	progress = mappingProgressFor([]git.Entry{{Status: "M ", Path: "tm/dot/file.txt"}}, item, "tm")
+	row = buildMapRow(item, kFile, kFile, true, progress)
+	if row.op != "[TO commit]" {
+		t.Fatalf("staged modification row = %+v, want TO commit", row)
+	}
+
+	// A partially staged path still has a content choice; it must not make the
+	// whole mapping look ready to commit.
+	progress = mappingProgressFor([]git.Entry{{Status: "AM", Path: "tm/dot/file.txt"}}, item, "tm")
+	row = buildMapRow(item, kFile, kMissing, false, progress)
+	if row.op != "[TO add OR get]" || !progress.staged || !progress.remaining {
+		t.Fatalf("partial staged row = %+v progress=%+v, want remaining choice", row, progress)
+	}
+
+	// Entries belonging to another mapping must not contaminate this one.
+	progress = mappingProgressFor([]git.Entry{
+		{Status: "M ", Path: "tm/dot/file.txt"},
+		{Status: " M", Path: "tm/other/file.txt"},
+	}, item, "tm")
+	if !progress.staged || progress.remaining {
+		t.Fatalf("cross-mapping progress leaked into item: %+v", progress)
+	}
+}
+
+func TestChangeActionMixedStatusKeepsRemainingChoice(t *testing.T) {
+	for status, want := range map[string]string{
+		"??": "TO add",
+		"A ": "TO commit",
+		" M": "TO add OR get",
+		"MM": "TO add OR get",
+	} {
+		if got := changeAction(status); got != want {
+			t.Errorf("changeAction(%q) = %q, want %q", status, got, want)
+		}
+	}
+}
+
+func TestMappedLocalPathForRepoIncludesChildPath(t *testing.T) {
+	localRoot := filepath.Join(t.TempDir(), "skills")
+	cfg := config.Defaults()
+	cfg.Map.Items = []config.MapItem{{
+		Scope:     config.ScopeMapRoot,
+		Path:      "skills",
+		LocalPath: localRoot,
+	}}
+	env := &Env{Cfg: cfg, MapRoot: "tm"}
+
+	got, ok := mappedLocalPathForRepo(env, "tm/skills/foo/SKILL.md")
+	want := filepath.Join(localRoot, "foo", "SKILL.md")
+	if !ok || got != want {
+		t.Fatalf("mapped local path = %q, %v; want %q, true", got, ok, want)
+	}
+	if got, ok := mappedLocalPathForRepo(env, ".gitignore"); ok || got != "" {
+		t.Fatalf("non-mapped path resolved as local: %q, %v", got, ok)
+	}
+}
 
 func TestGlobRegexp(t *testing.T) {
 	cases := []struct {
