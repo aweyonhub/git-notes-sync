@@ -98,11 +98,11 @@ mapsync 集成测试会创建真实 bare remote、clone 和 Git worktree，并�
 映射行：
 
 ```
-<本地路径> [本地状态] (scope) -> <仓库路径> [远程状态] [TO xxx]
+<本地路径> [本地状态] (scope) <仓库路径> [远程状态] [TO xxx]
 ```
 
 - 状态方括号 `[dir]` / `[file]` / `[link]` / `[missing]` **只在两端不一致时显示**；一致则省略
-- `->` 连接 scope 与仓库路径
+- scope 与仓库路径之间用空格分隔（无箭头）
 - 推荐操作 `[TO xxx]`：大写 `TO` + 小写动词
 - 改动行（dirty 具体文件，列在映射行下）：`<文件路径> [TO xxx]`
 
@@ -128,8 +128,8 @@ worktree:   D:\...\vip-desktop-worktree  gns/map/vip-desktop-worktree @ 380d1382
 .syncable:  false
 
 mappings:
-  ~/.dsh/skills [dir] (map-root) -> ai/dsh-skills [missing]  [TO add]
-  ~/.pi/agent/skills [dir] (map-root) -> ai/pi-skills [missing]  [TO add]
+  ~/.dsh/skills [dir] (map-root) ai/dsh-skills [missing]  [TO add]
+  ~/.pi/agent/skills [dir] (map-root) ai/pi-skills [missing]  [TO add]
 
 Next: gnm add -A
 Then: gnm commit ; gnm push
@@ -138,8 +138,8 @@ Then: gnm commit ; gnm push
 **add 了 pi 之后（进度变化）**
 ```
 mappings:
-  ~/.dsh/skills [dir] (map-root) -> ai/dsh-skills [missing]  [TO add]
-  ~/.pi/agent/skills (map-root) -> ai/pi-skills  [TO commit]
+  ~/.dsh/skills [dir] (map-root) ai/dsh-skills [missing]  [TO add]
+  ~/.pi/agent/skills (map-root) ai/pi-skills  [TO commit]
 
 Next: gnm add ~/.dsh/skills
 ```
@@ -147,8 +147,8 @@ Next: gnm add ~/.dsh/skills
 **SYNCABLE（一致，干净）**
 ```
 mappings:
-  ~/.dsh/skills (map-root) -> ai/dsh-skills
-  ~/.pi/agent/skills (map-root) -> ai/pi-skills
+  ~/.dsh/skills (map-root) ai/dsh-skills
+  ~/.pi/agent/skills (map-root) ai/pi-skills
 
 Next: nothing required
 ```
@@ -156,8 +156,8 @@ Next: nothing required
 **SYNCABLE（dirty，有单独文件）**
 ```
 mappings:
-  ~/.dsh/skills (map-root) -> ai/dsh-skills
-  ~/.pi/agent/skills (map-root) -> ai/pi-skills
+  ~/.dsh/skills (map-root) ai/dsh-skills
+  ~/.pi/agent/skills (map-root) ai/pi-skills
 
 改动:
   .gns/map/vip-desktop.toml [TO add]     ← 快照文件
@@ -169,7 +169,7 @@ Next: gnm sync
 **mapping-root（方向不明）**
 ```
 mappings:
-  ~/.dsh/skills [dir] (map-root) -> ai/dsh-skills [file]  [TO add OR get]
+  ~/.dsh/skills [dir] (map-root) ai/dsh-skills [file]  [TO add OR get]
 
 Next: gnm add ~/.dsh/skills   # 采用本机
   或  gnm get ~/.dsh/skills   # 采用仓库

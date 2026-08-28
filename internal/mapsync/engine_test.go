@@ -490,7 +490,7 @@ func TestStatusRendersStatesAndHints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"MANUAL_REQUIRED", "staged=", "unstaged=", "untracked=", "HEAD=missing", "gnm add", "gnm push"} {
+	for _, want := range []string{"MANUAL_REQUIRED", "staged=", "unstaged=", "untracked=", "[missing]", "[TO add]", "gnm add", "gnm push"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status missing %q:\n%s", want, out)
 		}
@@ -500,7 +500,7 @@ func TestStatusRendersStatesAndHints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"SYNCABLE", "HEAD=file"} {
+	for _, want := range []string{"SYNCABLE", "(map-root) dot/file.txt"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status missing %q:\n%s", want, out)
 		}
@@ -899,5 +899,50 @@ func TestCopyModeRootViolationBlocks(t *testing.T) {
 	// local content must survive
 	if _, err := os.Stat(filepath.Join(local, "child.txt")); err != nil {
 		t.Fatal("local content was deleted despite root violation block")
+	}
+}
+
+// TestAddNonMappedFile verifies `gnm add` accepts a worktree-relative file
+// outside any mapping (.gitignore), instead of rejecting it.
+func TestAddNonMappedFile(t *testing.T) {
+	env, _, _, _ := setupMapped(t, "")
+
+	gi := filepath.Join(env.Worktree, ".gitignore")
+	writeFile(t, gi, "# ignore\n")
+
+	if err := Add(env, []string{".gitignore"}, false); err != nil {
+		t.Fatalf("add non-mapped .gitignore: %v", err)
+	}
+	staged, err := env.wtRunner().HasStaged()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !staged {
+		t.Fatal(".gitignore not staged after add")
+	}
+}
+
+// TestGetNonMappedFile verifies `gnm get` restores the HEAD version of a
+// non-mapped file, and confirms deletion when HEAD lacks it.
+func TestGetNonMappedFile(t *testing.T) {
+	env, _, _, _ := setupMapped(t, "")
+	armGate(t, env)
+
+	gi := filepath.Join(env.Worktree, ".gitignore")
+	writeFile(t, gi, "# v1\n")
+	if err := Add(env, []string{".gitignore"}, false); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := Commit(env, "add gitignore"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// modify then restore via get
+	writeFile(t, gi, "# v2\n")
+	if err := Get(env, []string{".gitignore"}, false); err != nil {
+		t.Fatalf("get non-mapped .gitignore: %v", err)
+	}
+	if got := readFile(t, gi); got != "# v1\n" {
+		t.Fatalf("get should restore HEAD version, got %q", got)
 	}
 }

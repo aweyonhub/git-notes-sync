@@ -24,6 +24,7 @@ usage:
   gnm pull [-f | --force]     move the machine baseline to git-root (files untouched)
   gnm push                    manual confirm entry; arms .syncable
   gnm sync                    automatic entry; requires .syncable
+  gnm cd <worktree|git-root>  print the directory path (for shell cd)
 
 flags:
   -c path      config file (default: global config)
@@ -234,6 +235,30 @@ func cmdMap(args []string) error {
 			return err
 		}
 		return mapsync.Sync(env)
+
+	case "cd":
+		fs := flag.NewFlagSet("map cd", flag.ContinueOnError)
+		var cfgPath string
+		fs.StringVar(&cfgPath, "c", "", "config file path")
+		if err := fs.Parse(normalizeArgs(rest, map[string]bool{"c": true})); err != nil {
+			return err
+		}
+		if fs.NArg() != 1 {
+			return errors.New("usage: gnm cd <worktree|git-root>")
+		}
+		env, err := loadMapEnv(cfgPath)
+		if err != nil {
+			return err
+		}
+		switch fs.Arg(0) {
+		case "worktree":
+			fmt.Println(env.Worktree)
+		case "git-root":
+			fmt.Println(env.GitRoot)
+		default:
+			return errors.New("usage: gnm cd <worktree|git-root>")
+		}
+		return nil
 
 	case "help", "-h", "--help":
 		fmt.Printf(mapUsage)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/aweyonhub/git-notes-sync/internal/lock"
@@ -103,6 +104,10 @@ func mutateSelected(env *Env, args []string, all bool, side gitSide, op func(env
 
 // addNode stages the local state of one node into the worktree.
 func addNode(env *Env, idx int, rel string) error {
+	if idx == nonMappedIdx {
+		// Non-mapped worktree file (.gitignore, .gns snapshot): stage it as-is.
+		return env.wtRunner().Add(rel)
+	}
 	it := env.Cfg.Map.Items[idx]
 	localAbs := NormalizeLocal(it.LocalPath)
 	if rel != "" {
@@ -163,6 +168,30 @@ func addNode(env *Env, idx int, rel string) error {
 
 // getNode stages the HEAD state of one node and converges it down to local.
 func getNode(env *Env, idx int, rel string) error {
+	if idx == nonMappedIdx {
+		// Non-mapped worktree file: adopt its HEAD version. When HEAD does not
+		// track the path, adopting HEAD confirms a deletion.
+		inHead, err := env.headContains(rel)
+		if err != nil {
+			return err
+		}
+		if !inHead {
+			// Unstage first, then delete the working file: adopting HEAD for a
+			// path HEAD does not track confirms a deletion on both sides.
+			if err := env.wtRunner().ResetPaths("HEAD", rel); err != nil {
+				return err
+			}
+			p := filepath.Join(env.Worktree, filepath.FromSlash(rel))
+			if k := kindOf(p); k == kOther {
+				return &SpecialFileError{p}
+			}
+			return os.RemoveAll(p)
+		}
+		if _, err := env.wtRunner().Out("checkout", "HEAD", "--", rel); err != nil {
+			return fmt.Errorf("checkout %s: %w", rel, err)
+		}
+		return nil
+	}
 	it := env.Cfg.Map.Items[idx]
 	wtAbs, repoRel, err := env.worktreeJoin(it, rel)
 	if err != nil {

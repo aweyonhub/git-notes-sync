@@ -111,10 +111,12 @@ func Status(env *Env) (string, error) {
 		fmt.Fprintf(&b, "git-root:   %s\n            NOT_A_GIT_REPOSITORY\n            Next: clone or create a Git repository there, or fix map.git_root\n", env.GitRoot)
 	}
 	dirty := false
+	var wtEntries []git.Entry
 	if init {
 		fmt.Fprintf(&b, "worktree:   %s\n", env.Worktree)
 		fmt.Fprintf(&b, "            %s\n", repoLine(w))
 		if entries, err := w.Status(); err == nil {
+			wtEntries = entries
 			dirty = len(entries) > 0
 			staged, unstaged, untracked := statusCounts(entries)
 			fmt.Fprintf(&b, "            dirty=%v staged=%d unstaged=%d untracked=%d\n",
@@ -154,31 +156,84 @@ func Status(env *Env) (string, error) {
 	if len(env.Cfg.Map.Items) == 0 {
 		b.WriteString("  (none configured; `gnm config add -a <repo-path> <local-path>`)\n")
 	}
+	pendingChoices := []string{}
+	hasStaged := false
+	rows := make([]mapRow, 0, len(env.Cfg.Map.Items))
 	for _, it := range env.Cfg.Map.Items {
 		lk := kindOf(NormalizeLocal(it.LocalPath))
 		hk := kMissing
 		if _, err := env.worktreePathOf(it); err == nil {
 			hk = headKind(w, it, env.MapRoot)
 		}
-		note := ""
 		match := mappingKindsMatch(env, it, lk, hk)
-		switch {
-		case lk == kMissing && hk == kMissing:
-			note = "empty on both sides"
-		case !match:
-			note = "NEEDS CHOICE"
+		if !match && !(lk == kMissing && hk == kMissing) {
+			pendingChoices = append(pendingChoices, it.LocalPath)
 		}
-		scope := it.Scope
-		if scope == config.ScopeMapRoot {
-			scope += fmt.Sprintf(" → %s/", env.MapRoot)
+		rows = append(rows, buildMapRow(it, lk, hk, match))
+	}
+	b.WriteString(renderMapRows(rows))
+	for _, e := range wtEntries {
+		if len(e.Status) > 0 && e.Status[0] != ' ' {
+			hasStaged = true
+			break
 		}
-		fmt.Fprintf(&b, "  %-28s [%s] local=%s HEAD=%s %s\n",
-			it.LocalPath, scope, kindName(lk), kindName(hk), note)
+	}
+
+	if init && len(wtEntries) > 0 {
+		b.WriteString(renderChanges(env, wtEntries))
 	}
 
 	b.WriteString("\n")
-	b.WriteString(nextSteps(env, state, blocked, dirty, mappingProblem, operation))
+	b.WriteString(nextSteps(env, state, blocked, dirty, mappingProblem, operation, pendingChoices, hasStaged))
 	return b.String(), nil
+}
+
+// renderChanges lists the worktree's dirty files with their owning mapping
+// (or "other" for non-mapped files like .gitignore and the .gns snapshot) and
+// a recommended action, so the user knows exactly which path to act on.
+func renderChanges(env *Env, entries []git.Entry) string {
+	var b strings.Builder
+	b.WriteString("\nchanges:\n")
+	for _, e := range entries {
+		b.WriteString("  " + e.Path)
+		if owner := changeOwner(env, e.Path); owner != "" {
+			b.WriteString("  [" + owner + "]")
+		} else {
+			b.WriteString("  [other]")
+		}
+		if action := changeAction(e.Status); action != "" {
+			b.WriteString("  [" + action + "]")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// changeOwner maps a worktree-relative repo path to the local path of the
+// mapping that owns it, or "" when it is not under any mapping.
+func changeOwner(env *Env, repoPath string) string {
+	for _, it := range env.Cfg.Map.Items {
+		rp, err := RepoPathOf(it, env.MapRoot)
+		if err != nil {
+			continue
+		}
+		if repoPath == rp || strings.HasPrefix(repoPath, rp+"/") {
+			return it.LocalPath
+		}
+	}
+	return ""
+}
+
+// changeAction maps a porcelain XY status to a recommended [TO …] marker:
+// untracked → add, staged → commit, unstaged → add OR get.
+func changeAction(status string) string {
+	if status == "??" {
+		return "TO add"
+	}
+	if len(status) > 0 && status[0] != ' ' {
+		return "TO commit"
+	}
+	return "TO add OR get"
 }
 
 func statusCounts(entries []git.Entry) (staged, unstaged, untracked int) {
@@ -220,6 +275,69 @@ func headKind(w *git.Runner, item config.MapItem, mapRoot string) entryKind {
 	}
 }
 
+// mapRow is one mapping row split into columns for aligned rendering.
+type mapRow struct {
+	local string // local path
+	lk    string // local kind, only when sides differ
+	scope string // (map-root) | (git-root)
+	repo  string // repo path
+	hk    string // HEAD kind, only when sides differ
+	op    string // [TO …] recommendation (or [empty])
+}
+
+// buildMapRow computes the columns of one mapping row.
+func buildMapRow(item config.MapItem, lk, hk entryKind, match bool) mapRow {
+	scope := "(git-root)"
+	if item.Scope == config.ScopeMapRoot {
+		scope = "(map-root)"
+	}
+	r := mapRow{local: item.LocalPath, scope: scope, repo: item.Path}
+	if !match {
+		r.lk = "[" + kindName(lk) + "]"
+		r.hk = "[" + kindName(hk) + "]"
+	}
+	switch {
+	case lk == kMissing && hk == kMissing:
+		r.op = "[empty]"
+	case !match && lk == kMissing:
+		r.op = "[TO get]"
+	case !match && hk == kMissing:
+		r.op = "[TO add]"
+	case !match:
+		r.op = "[TO add OR get]"
+	}
+	return r
+}
+
+// renderMapRows aligns every mapping row column-wise (spec §6.4 redesign).
+func renderMapRows(rows []mapRow) string {
+	var wLocal, wLk, wScope, wRepo, wHk int
+	for _, r := range rows {
+		if n := len(r.local); n > wLocal {
+			wLocal = n
+		}
+		if n := len(r.lk); n > wLk {
+			wLk = n
+		}
+		if n := len(r.scope); n > wScope {
+			wScope = n
+		}
+		if n := len(r.repo); n > wRepo {
+			wRepo = n
+		}
+		if n := len(r.hk); n > wHk {
+			wHk = n
+		}
+	}
+	var b strings.Builder
+	for _, r := range rows {
+		line := fmt.Sprintf("  %-*s  %-*s  %-*s %-*s  %-*s  %s",
+			wLocal, r.local, wLk, r.lk, wScope, r.scope, wRepo, r.repo, wHk, r.hk, r.op)
+		b.WriteString(strings.TrimRight(line, " ") + "\n")
+	}
+	return b.String()
+}
+
 func mappingKindsMatch(env *Env, item config.MapItem, localKind, headKind entryKind) bool {
 	if !env.LinkMode() {
 		return localKind == headKind
@@ -254,7 +372,7 @@ func repoLine(g *git.Runner) string {
 }
 
 // nextSteps mirrors the suggestion table of spec §6.4.
-func nextSteps(env *Env, state string, blocked *BlockedState, dirty bool, mappingProblem, operation string) string {
+func nextSteps(env *Env, state string, blocked *BlockedState, dirty bool, mappingProblem, operation string, pendingChoices []string, hasStaged bool) string {
 	var s []string
 	switch {
 	case state == "NOT_INITIALIZED":
@@ -286,11 +404,19 @@ func nextSteps(env *Env, state string, blocked *BlockedState, dirty bool, mappin
 			s = append(s, fmt.Sprintf("      gnm add %s or gnm get %s", quoteCLI(local), quoteCLI(local)))
 		}
 		s = append(s, "      gnm commit -m \"resolve map conflict\"", "      gnm push")
-	case state == "MANUAL_REQUIRED" && mappingProblem != "":
-		s = append(s,
-			"Next: gnm add <path>    # keep the local version",
-			"   or gnm get <path>    # adopt the HEAD version",
-			"Then: gnm commit -m \"...\" ; gnm push")
+	case state == "MANUAL_REQUIRED" && len(pendingChoices) > 0:
+		if len(pendingChoices) == 1 {
+			s = append(s,
+				fmt.Sprintf("Next: gnm add %s   # keep local", quoteCLI(pendingChoices[0])),
+				fmt.Sprintf("   or gnm get %s   # adopt HEAD", quoteCLI(pendingChoices[0])))
+		} else {
+			s = append(s,
+				"Next: gnm add -A   # keep all local",
+				"   or gnm add <path...>   # pick individually")
+		}
+		s = append(s, "Then: gnm commit -m \"...\" ; gnm push")
+	case state == "MANUAL_REQUIRED" && hasStaged:
+		s = append(s, "Next: gnm commit -m \"...\"", "Then: gnm push")
 	case state == "MANUAL_REQUIRED" && !dirty:
 		s = append(s, "Next: gnm push   # confirm the clean initial/recovery state")
 	case state == "MANUAL_REQUIRED":

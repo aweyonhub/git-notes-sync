@@ -18,6 +18,10 @@ const (
 	sideHEAD                    // get: union(local fs, HEAD tree)
 )
 
+// nonMappedIdx marks a selection outside any mapping — a worktree-relative
+// file like .gitignore or the .gns snapshot (spec §6.4 redesign).
+const nonMappedIdx = -1
+
 // globRegexp compiles a path pattern where * matches any characters within
 // a single level — including names starting with "." — and never crosses a
 // separator (spec §5.1). Both full-segment stars (`/a/*`) and embedded ones
@@ -83,6 +87,12 @@ func selectNodes(env *Env, args []string, all bool, side gitSide) (map[int][]str
 		if !strings.Contains(filepath.ToSlash(norm), "*") {
 			idx, err := findOwningItem(env.Cfg.Map.Items, norm)
 			if err != nil {
+				// Not under any mapping: allow worktree-relative files such as
+				// .gitignore and the .gns snapshot (spec §6.4 redesign).
+				if rel, ok := nonMappedRel(env, arg); ok {
+					add(nonMappedIdx, rel)
+					continue
+				}
 				return nil, fmt.Errorf("map add/get: %v", err)
 			}
 			rootAbs := NormalizeLocal(env.Cfg.Map.Items[idx].LocalPath)
@@ -220,4 +230,20 @@ func collapseDescendants(rels []string) []string {
 		}
 	}
 	return kept
+}
+
+// nonMappedRel interprets arg as a worktree-relative path for a file outside
+// any mapping (.gitignore, .gns snapshot). It returns the slash form and true
+// only when the path stays inside the worktree and is not absolute/escaping.
+func nonMappedRel(env *Env, arg string) (string, bool) {
+	clean := filepath.ToSlash(filepath.Clean(arg))
+	if clean == "" || clean == "." || clean == ".." ||
+		strings.HasPrefix(clean, "../") || filepath.IsAbs(arg) || strings.HasPrefix(clean, "/") {
+		return "", false
+	}
+	joined := filepath.Join(env.Worktree, filepath.FromSlash(clean))
+	if !within(LocalKey(joined), LocalKey(env.Worktree)) {
+		return "", false
+	}
+	return clean, true
 }

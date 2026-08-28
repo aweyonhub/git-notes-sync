@@ -6,7 +6,7 @@ package version
 // value via -ldflags (see Makefile / CI). The default is generated from
 // package.json by scripts/genversion (go generate ./internal/version), so
 // the version lives in a single place.
-var Version = "0.1.6"
+var Version = "0.1.7"
 
 // Commit is the git commit the binary was built from (optional, ldflags).
 var Commit = "unknown"
