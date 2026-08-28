@@ -17,7 +17,7 @@
 | 配置操作 | add/remove/list/validate/save/load；初始化后增删立即生效 | ✅ |
 | 内容选择 | `gnm add/get` 支持 mapped 文件/目录、`-A/--all`、单层 `*`，以及非映射 worktree 文件的精确路径 | ✅ |
 | 状态诊断 | 三状态、Git 状态、映射关系与方向、dirty 文件清单、copy 本机变化、推荐操作 | ✅ |
-| 路径导航 | `gnm cd worktree` / `gnm cd git-root` 输出可供 shell 接管的纯路径 | ✅ |
+| 路径导航 | `gnm cd worktree` / `gnm cd git-root` 输出可复制命令，`-p/--path` 输出纯路径 | ✅ |
 | 同步链路 | pull → worktree merge → git-root fast-forward → push | ✅ |
 | 阻断恢复 | 普通 pull、force pull、备份 ref、人工 add/get/commit/push | ✅ |
 | 自动闸门 | 首次 push 创建 `.syncable`；明确人工边界时解除 | ✅ |
@@ -187,24 +187,34 @@ Next: gnm add ~/.dsh/skills/herdr/SKILL.md
 
 ### 6.4 路径跳转命令
 
-`gnm cd <worktree|git-root>` 输出目标目录的绝对路径，方便用户在 shell 里跳转后手动操作（worktree 路径藏在 app-data 里很长）：
+`gnm cd <worktree|git-root>` 输出一条可直接复制执行的平台命令，方便用户跳转到藏在 app-data 深处的 worktree，也能安全处理包含空格的路径。
+
+Windows 输出带绝对路径的 `pushd`，同一条命令兼容 CMD 和 PowerShell，并能跨盘符：
 
 ```
-gnm cd worktree   # → D:\Users\...\AppData\Roaming\git-notes-sync\map\vip-desktop-worktree
-gnm cd git-root   # → E:\aWEY\github\awey-map
+gnm cd worktree   # → pushd "D:\Users\...\vip-desktop-worktree"
+gnm cd git-root   # → pushd "E:\aWEY\github\awey-map"
 ```
 
-用法（子进程不能直接改父 shell 的 cwd，所以输出路径由 shell 接手）：
+macOS/Linux 输出适用于 bash 和 zsh 的命令：
 
-```powershell
-# PowerShell
-cd (gnm cd worktree)
-cd (gnm cd git-root)
-```
 ```bash
-# bash / zsh
-cd "$(gnm cd worktree)"
-cd "$(gnm cd git-root)"
+gnm cd worktree   # → cd "$(gnm cd -p worktree)"
+gnm cd git-root   # → cd "$(gnm cd -p git-root)"
 ```
 
-约束：只输出纯路径一行（无日志、无 `map ...` 前缀），否则 shell 命令替换会拿到脏内容。
+复制对应输出并执行即可。例如在 macOS/Linux 中：
+
+```bash
+cd "$(gnm cd -p worktree)"
+cd "$(gnm cd -p git-root)"
+```
+
+脚本或其他命令需要取得纯路径时，使用 `-p` 或 `--path`：
+
+```bash
+gnm cd -p worktree
+gnm cd --path git-root
+```
+
+约束：`-p/--path` 只输出纯路径一行（无日志、无 `map ...` 前缀），否则 shell 命令替换会拿到脏内容。

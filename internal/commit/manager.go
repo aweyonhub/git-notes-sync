@@ -109,7 +109,7 @@ func (m *Manager) commit(g *git.Runner, mode, msg string) (bool, error) {
 		return false, err
 	}
 	if msg == "" {
-		summary, err := buildSummary(g)
+		summary, err := BuildSummary(g)
 		if err != nil {
 			return false, err
 		}

@@ -162,6 +162,26 @@ func armGate(t *testing.T, env *Env) {
 
 // ---------- tests ----------
 
+func TestManualCommitDefaultMessageIncludesStagedSummary(t *testing.T) {
+	env, _, local, _ := setupMapped(t, "")
+	if err := Add(env, []string{local}, false); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := Commit(env, ""); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	msg := gitCmd(t, env.Worktree, "log", "-1", "--format=%B")
+	for _, want := range []string{
+		"map(tm): update mapped content",
+		"files: 1 changed",
+		"- tm/dot/file.txt (+1, -0)",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("manual map commit message missing %q:\n%s", want, msg)
+		}
+	}
+}
+
 func TestInitPublishesLocalThenPushSyncRoundtrip(t *testing.T) {
 	env, _, local, _ := setupMapped(t, "")
 
@@ -188,6 +208,16 @@ func TestInitPublishesLocalThenPushSyncRoundtrip(t *testing.T) {
 	}
 	if !HasSyncable(env) {
 		t.Fatal(".syncable lost after successful sync")
+	}
+	msg := gitCmd(t, env.Worktree, "log", "-1", "--format=%B")
+	for _, want := range []string{
+		"map(tm): update mapped content",
+		"files: 1 changed, +1, -1",
+		"- tm/dot/file.txt (+1, -1)",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("automatic map commit message missing %q:\n%s", want, msg)
+		}
 	}
 	if b, _ := ReadBlocked(env); b != nil {
 		t.Fatalf("blocked state left behind: %+v", b)

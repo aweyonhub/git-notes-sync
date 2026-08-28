@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
+	"strings"
 
 	"github.com/aweyonhub/git-notes-sync/internal/config"
 	"github.com/aweyonhub/git-notes-sync/internal/lock"
@@ -24,9 +26,21 @@ usage:
   gnm pull [-f | --force]     move the machine baseline to git-root (files untouched)
   gnm push                    manual confirm entry; arms .syncable
   gnm sync                    automatic entry; requires .syncable
-  gnm cd <worktree|git-root>  print the directory path (for shell cd)
+  gnm cd [-p|--path] <worktree|git-root>  print a copyable cd command (path only with -p)
 
 flags:
+  -c path      config file (default: global config)
+`
+
+const mapCdUsage = `gnm cd — print a platform-ready directory command or its target path
+
+usage:
+  gnm cd <worktree|git-root>             print a command to copy and run (Windows: pushd)
+  gnm cd -p <worktree|git-root>          print the absolute path only
+  gnm cd --path <worktree|git-root>      print the absolute path only
+
+flags:
+  -p, --path   print the directory path only
   -c path      config file (default: global config)
 `
 
@@ -51,6 +65,30 @@ flags:
 // mapLogf prints prefixed progress lines using the shared log stamp.
 func mapLogf(f string, a ...any) {
 	fmt.Printf("%s  %s\n", logStamp(), fmt.Sprintf(f, a...))
+}
+
+// shellQuoteCdArg quotes an argument for the platform's usual interactive
+// shell. Both POSIX shells and PowerShell use single quotes for literal text,
+// but escape an embedded single quote differently.
+func shellQuoteCdArg(s string) string {
+	if runtime.GOOS == "windows" {
+		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+func mapCdCommand(target, targetPath, cfgPath string) string {
+	// CMD has no $(...) command substitution. pushd with a quoted absolute
+	// path works in both CMD and PowerShell and also changes drive letters.
+	if runtime.GOOS == "windows" {
+		return `pushd "` + targetPath + `"`
+	}
+	args := []string{"gnm", "cd", "-p"}
+	if cfgPath != "" {
+		args = append(args, "-c", shellQuoteCdArg(cfgPath))
+	}
+	args = append(args, target)
+	return `cd "$(` + strings.Join(args, " ") + `)"`
 }
 
 // loadUserConfig loads the map user config, tolerating a not-yet-created
@@ -239,24 +277,40 @@ func cmdMap(args []string) error {
 	case "cd":
 		fs := flag.NewFlagSet("map cd", flag.ContinueOnError)
 		var cfgPath string
+		var pathOnly bool
+		fs.SetOutput(os.Stdout)
+		fs.Usage = func() { fmt.Fprint(fs.Output(), mapCdUsage) }
 		fs.StringVar(&cfgPath, "c", "", "config file path")
+		fs.BoolVar(&pathOnly, "p", false, "print the directory path only")
+		fs.BoolVar(&pathOnly, "path", false, "print the directory path only")
 		if err := fs.Parse(normalizeArgs(rest, map[string]bool{"c": true})); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
 			return err
 		}
 		if fs.NArg() != 1 {
-			return errors.New("usage: gnm cd <worktree|git-root>")
+			return errors.New("usage: gnm cd [-p|--path] <worktree|git-root>")
+		}
+		target := fs.Arg(0)
+		if target != "worktree" && target != "git-root" {
+			return errors.New("usage: gnm cd [-p|--path] <worktree|git-root>")
 		}
 		env, err := loadMapEnv(cfgPath)
 		if err != nil {
 			return err
 		}
-		switch fs.Arg(0) {
+		var targetPath string
+		switch target {
 		case "worktree":
-			fmt.Println(env.Worktree)
+			targetPath = env.Worktree
 		case "git-root":
-			fmt.Println(env.GitRoot)
-		default:
-			return errors.New("usage: gnm cd <worktree|git-root>")
+			targetPath = env.GitRoot
+		}
+		if pathOnly {
+			fmt.Println(targetPath)
+		} else {
+			fmt.Println(mapCdCommand(target, targetPath, cfgPath))
 		}
 		return nil
 

@@ -435,15 +435,19 @@ func wtHasChanges(w *git.Runner) (bool, error) {
 	return len(entries) > 0, nil
 }
 
-// commitWorktree stages everything and commits with the default message
-// (format itself is a pending decision, spec §十).
+// commitWorktree stages everything and commits with the default map subject
+// plus the shared staged-file summary.
 func commitWorktree(env *Env, msg string) error {
 	w := env.wtRunner()
-	if msg == "" {
-		msg = fmt.Sprintf("map(%s): update mapped content", env.MapRoot)
-	}
 	if err := w.AddAll(); err != nil {
 		return fmt.Errorf("map: stage: %w", err)
+	}
+	if msg == "" {
+		var err error
+		msg, err = defaultCommitMessage(w, env.MapRoot)
+		if err != nil {
+			return fmt.Errorf("map: build commit message: %w", err)
+		}
 	}
 	if err := w.Commit(msg); err != nil {
 		return fmt.Errorf("map: commit: %w", err)

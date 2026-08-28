@@ -575,7 +575,7 @@ gnm commit [--message <message>]
 2. 有 staged changes 时创建 commit，无变更时正常结束；
 3. 不隐式执行 `add -A`；
 4. 不拉取、不合并、不推送，也不创建 `.syncable`；
-5. 未指定 message 时生成默认提交信息，显式空 message 视为参数错误。
+5. 未指定 message 时生成默认提交信息：标题为 `map(<map-root>): update mapped content`，正文复用 `git-notes-sync` 的 staged diff 摘要（文件数、增删行及最多 20 条文件明细）；显式空 message 视为参数错误。
 
 ### 6.7 `gnm push`
 
@@ -766,5 +766,5 @@ gnm push
 - 操作中断后如何记录执行阶段和旧 git-root / worktree HEAD，以及使用隐藏 ref、备份分支还是状态文件；
 - copy 是否增加可选的 hash 校验；
 - 是否增加 `dry-run`、批量迁移和卸载等辅助能力；
-- ~~自动 commit message 的默认格式~~ → **已决**：`map(<map-root>): update mapped content`；
+- ~~自动 commit message 的默认格式~~ → **已决**：标题为 `map(<map-root>): update mapped content`，正文复用 staged diff 摘要（最多 20 条文件明细）；
 - Bash / Zsh 自动补全同 `gns` 还未实现。

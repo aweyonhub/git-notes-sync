@@ -10,13 +10,13 @@ import (
 // maxFileLines caps per-file lines in the summary message.
 const maxFileLines = 20
 
-// buildSummary renders the diff summary for a staged state, e.g.:
+// BuildSummary renders the diff summary for a staged state, e.g.:
 //
 //	files: 3 changed, +42, -8
 //	- docroot/10-note/mac/aerospace.md (+20, -3)
 //	- docroot/10-note/tools/brew.md (+15, -5)
 //	- docroot/20-collect/draft.md (+7)
-func buildSummary(g *git.Runner) (string, error) {
+func BuildSummary(g *git.Runner) (string, error) {
 	ns, err := g.CachedNumstat()
 	if err != nil {
 		return "", err

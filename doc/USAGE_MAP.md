@@ -176,7 +176,7 @@ gnm status
 ```bash
 gnm add <path-or-pattern...>     # 采用本机版本并暂存
 gnm get <path-or-pattern...>     # 采用 HEAD 版本并下发
-gnm commit                       # 使用默认提交信息
+gnm commit                       # 默认标题 + staged 文件与增删行摘要
 gnm commit -m "message"         # 自定义提交信息
 gnm push                         # 人工确认入口
 ```

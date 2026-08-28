@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 
+	commitpkg "github.com/aweyonhub/git-notes-sync/internal/commit"
+	"github.com/aweyonhub/git-notes-sync/internal/git"
 	"github.com/aweyonhub/git-notes-sync/internal/lock"
 )
 
@@ -330,7 +332,10 @@ func Commit(env *Env, msg string) error {
 		return nil
 	}
 	if msg == "" {
-		msg = defaultCommitMessage(env.MapRoot)
+		msg, err = defaultCommitMessage(w, env.MapRoot)
+		if err != nil {
+			return fmt.Errorf("map: build commit message: %w", err)
+		}
 	}
 	if err := w.Commit(msg); err != nil {
 		return fmt.Errorf("map: commit: %w", err)
@@ -339,8 +344,12 @@ func Commit(env *Env, msg string) error {
 	return nil
 }
 
-// defaultCommitMessage is the automatic message format (exact wording is an
-// open item, spec §十).
-func defaultCommitMessage(mapRoot string) string {
-	return "map(" + mapRoot + "): update mapped content"
+// defaultCommitMessage keeps the stable map subject and reuses the ordinary
+// git-notes-sync staged-file summary for the body.
+func defaultCommitMessage(w *git.Runner, mapRoot string) (string, error) {
+	summary, err := commitpkg.BuildSummary(w)
+	if err != nil {
+		return "", err
+	}
+	return "map(" + mapRoot + "): update mapped content\n\n" + summary, nil
 }
