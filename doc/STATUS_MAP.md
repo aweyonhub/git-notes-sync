@@ -91,3 +91,121 @@ mapsync 集成测试会创建真实 bare remote、clone 和 Git worktree，并�
 | 4 | `gnm status` 的 dirty 只显示计数、不列出具体文件 | `status.go:117-121` | worktree 行只显示 `dirty=true staged=0 unstaged=1 untracked=0`，未列出具体哪些文件 dirty。用户不知道要对哪个文件执行 `gnm add/get`（如 pull 后 `.gitignore` 是 unstaged，但 status 不显示文件名）。应列出 dirty 的具体文件路径（类似 `git status --short` 的文件清单），并给每个文件标注下一步。 |
 | 5 | `gnm add/get` 无法操作非映射文件（`.gitignore`、`.gns` 快照） | `model.go:202-218`（`findOwningItem`） | 当 worktree 里有非映射文件的差异（如 pull 后 `.gitignore`、`.gns/map/*.toml` 快照），`gnm get .gitignore` 报 "is not within any configured mapping"，用户无法精确 add/get。只有 `gnm add -A`（`git add -A`）能暂存它们（采用 worktree 当前版本），但没有"采用 HEAD 版本"的途径。应支持对 worktree 内非映射文件的 add/get，或给出明确的解决指引。 |
 
+## 六、`gnm status` 改版设计（对应 P0 #1/#2/#4/#5）
+
+### 6.1 格式定义
+
+映射行：
+
+```
+<本地路径> [本地状态] (scope) -> <仓库路径> [远程状态] [TO xxx]
+```
+
+- 状态方括号 `[dir]` / `[file]` / `[link]` / `[missing]` **只在两端不一致时显示**；一致则省略
+- `->` 连接 scope 与仓库路径
+- 推荐操作 `[TO xxx]`：大写 `TO` + 小写动词
+- 改动行（dirty 具体文件，列在映射行下）：`<文件路径> [TO xxx]`
+
+### 6.2 推荐操作词汇表
+
+| 标记 | 含义 | 对应命令 |
+|------|------|---------|
+| `[TO add]` | 采用本机版本 | `gnm add <path>` |
+| `[TO get]` | 采用仓库版本 | `gnm get <path>` |
+| `[TO add OR get]` | 方向不明，需人工选 | `gnm add` / `gnm get` |
+| `[TO commit]` | 已选择，待提交 | `gnm commit` |
+| `[TO push]` | 已提交，待推送 | `gnm push` |
+
+### 6.3 各阶段示例
+
+**首次 MANUAL_REQUIRED（两端不一致）**
+```
+state:      MANUAL_REQUIRED
+map-root:   vip-desktop
+mode:       link
+git-root:   E:\aWEY\github\awey-map  main @ 380d1382be
+worktree:   D:\...\vip-desktop-worktree  gns/map/vip-desktop-worktree @ 380d1382be
+.syncable:  false
+
+mappings:
+  ~/.dsh/skills [dir] (map-root) -> ai/dsh-skills [missing]  [TO add]
+  ~/.pi/agent/skills [dir] (map-root) -> ai/pi-skills [missing]  [TO add]
+
+Next: gnm add -A
+Then: gnm commit ; gnm push
+```
+
+**add 了 pi 之后（进度变化）**
+```
+mappings:
+  ~/.dsh/skills [dir] (map-root) -> ai/dsh-skills [missing]  [TO add]
+  ~/.pi/agent/skills (map-root) -> ai/pi-skills  [TO commit]
+
+Next: gnm add ~/.dsh/skills
+```
+
+**SYNCABLE（一致，干净）**
+```
+mappings:
+  ~/.dsh/skills (map-root) -> ai/dsh-skills
+  ~/.pi/agent/skills (map-root) -> ai/pi-skills
+
+Next: nothing required
+```
+
+**SYNCABLE（dirty，有单独文件）**
+```
+mappings:
+  ~/.dsh/skills (map-root) -> ai/dsh-skills
+  ~/.pi/agent/skills (map-root) -> ai/pi-skills
+
+改动:
+  .gns/map/vip-desktop.toml [TO add]     ← 快照文件
+  .gitignore [TO get]                    ← 非映射文件
+
+Next: gnm sync
+```
+
+**mapping-root（方向不明）**
+```
+mappings:
+  ~/.dsh/skills [dir] (map-root) -> ai/dsh-skills [file]  [TO add OR get]
+
+Next: gnm add ~/.dsh/skills   # 采用本机
+  或  gnm get ~/.dsh/skills   # 采用仓库
+```
+
+**merge-conflict（冲突有具体文件）**
+```
+blocked:    merge-conflict
+冲突:
+  ~/.dsh/skills/herdr/SKILL.md  [TO add OR get]
+
+Next: gnm add ~/.dsh/skills/herdr/SKILL.md
+  或  gnm get ~/.dsh/skills/herdr/SKILL.md
+```
+
+### 6.4 路径跳转命令
+
+`gnm cd <worktree|git-root>` 输出目标目录的绝对路径，方便用户在 shell 里跳转后手动操作（worktree 路径藏在 app-data 里很长）：
+
+```
+gnm cd worktree   # → D:\Users\...\AppData\Roaming\git-notes-sync\map\vip-desktop-worktree
+gnm cd git-root   # → E:\aWEY\github\awey-map
+```
+
+用法（子进程不能直接改父 shell 的 cwd，所以输出路径由 shell 接手）：
+
+```powershell
+# PowerShell
+cd (gnm cd worktree)
+cd (gnm cd git-root)
+```
+```bash
+# bash / zsh
+cd "$(gnm cd worktree)"
+cd "$(gnm cd git-root)"
+```
+
+约束：只输出纯路径一行（无日志、无 `map ...` 前缀），否则 shell 命令替换会拿到脏内容。
+
